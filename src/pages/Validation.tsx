@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import {
     Box, Card, CardContent, Typography, Chip, Divider,
     Accordion, AccordionSummary, AccordionDetails, Breadcrumbs,
-    Alert, LinearProgress, Tab, Tabs, Button, Tooltip,
+    Alert, LinearProgress, Tab, Tabs, Button, Tooltip, IconButton,
+    Collapse,
 } from '@mui/material';
 import { Grid } from '@mui/material';
 import {
     NavigateNext, ExpandMore, CheckCircle, WarningAmber,
     ErrorOutline, InfoOutlined, Shield, ArrowBack, Refresh,
+    DeleteOutline, RestoreFromTrash, CompareArrows,
 } from '@mui/icons-material';
 import { useValidationStore } from '../store/validationStore';
 import { validateExtraction } from '../api/validation';
@@ -16,6 +18,7 @@ import { useExtractionStore } from '../store/extractionStore';
 import { FINDING_DOMAINS } from '../lib/constants';
 import type { FindingDomain } from '../api/types';
 import { useNavigate } from 'react-router-dom';
+import { useSnackbar } from 'notistack';
 
 const SEVERITY_CONFIG = {
     blocker: { color: '#EF4444', bg: '#FEF2F2', icon: <ErrorOutline sx={{ fontSize: 16 }} />, label: 'Blocker', chipColor: 'error' as const },
@@ -34,12 +37,17 @@ const DOMAIN_ICONS: Record<FindingDomain | 'all', React.ReactNode> = {
 };
 
 const Validation: React.FC = () => {
-    const { validation, setValidation, isValidating, setIsValidating, dismissedFindings } = useValidationStore();
+    const {
+        validation, setValidation, isValidating, setIsValidating,
+        dismissedFindings, dismissFinding, dismissMultiple, undismissFinding, undismissAll,
+    } = useValidationStore();
     const { extraction } = useExtractionStore();
     const navigate = useNavigate();
+    const { enqueueSnackbar } = useSnackbar();
 
     const [severityTab, setSeverityTab] = useState(0);
     const [domainTab, setDomainTab] = useState(0);
+    const [showDismissed, setShowDismissed] = useState(false);
 
     const severityFilters = ['all', 'blocker', 'warning', 'info'];
     const domainFilters = FINDING_DOMAINS.map(d => d.id);
@@ -54,10 +62,10 @@ const Validation: React.FC = () => {
     useEffect(() => { if (!validation) loadValidation(); }, []);
 
     const allFindings = validation?.findings.filter((f) => !dismissedFindings.includes(f.id)) ?? [];
+    const dismissedList = validation?.findings.filter((f) => dismissedFindings.includes(f.id)) ?? [];
 
     // Filter by severity tab
     const afterSeverity = severityTab === 0 ? allFindings : allFindings.filter((f) => f.severity === severityFilters[severityTab]);
-
     // Filter by domain tab
     const filtered = domainTab === 0 ? afterSeverity : afterSeverity.filter((f) => f.domain === domainFilters[domainTab]);
 
@@ -74,6 +82,29 @@ const Validation: React.FC = () => {
 
     const isReady = counts.blocker === 0;
 
+    // Dismiss all currently visible (filtered) findings
+    const handleDismissAll = () => {
+        const ids = filtered.map(f => f.id);
+        if (ids.length === 0) return;
+        dismissMultiple(ids);
+        enqueueSnackbar(`${ids.length} finding${ids.length > 1 ? 's' : ''} removed.`, { variant: 'success', autoHideDuration: 3000 });
+    };
+
+    const handleDismissOne = (id: string, field: string) => {
+        dismissFinding(id);
+        enqueueSnackbar(`"${field}" removed from findings.`, { variant: 'info', autoHideDuration: 2500 });
+    };
+
+    const handleRestoreOne = (id: string, field: string) => {
+        undismissFinding(id);
+        enqueueSnackbar(`"${field}" restored to findings.`, { variant: 'info', autoHideDuration: 2500 });
+    };
+
+    const handleRestoreAll = () => {
+        undismissAll();
+        enqueueSnackbar('All removed findings restored.', { variant: 'success', autoHideDuration: 3000 });
+    };
+
     return (
         <PageShell>
             <Breadcrumbs separator={<NavigateNext fontSize="small" sx={{ color: '#9CA3AF' }} />} sx={{ mb: 1 }}>
@@ -87,9 +118,14 @@ const Validation: React.FC = () => {
                     <Typography variant="h1" sx={{ fontSize: { xs: '1.375rem', md: '1.75rem' }, fontWeight: 600, mb: 0.5 }}>Validation Report</Typography>
                     <Typography variant="body2" color="text.secondary">Prerequisite compatibility findings grouped by domain and severity.</Typography>
                 </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     <Button startIcon={<ArrowBack sx={{ fontSize: 14 }} />} onClick={() => navigate('/extract')} size="small" variant="outlined" sx={{ borderColor: '#E4E7EC', color: 'text.secondary' }}>Back to Review</Button>
                     <Button startIcon={<Refresh sx={{ fontSize: 14 }} />} onClick={loadValidation} disabled={isValidating} size="small" variant="outlined" sx={{ borderColor: '#E4E7EC', color: 'text.secondary' }}>Re-run</Button>
+                    {isReady && (
+                        <Button startIcon={<CompareArrows sx={{ fontSize: 14 }} />} onClick={() => navigate('/comparison')} size="small" variant="contained">
+                            Compare with Scan
+                        </Button>
+                    )}
                 </Box>
             </Box>
 
@@ -109,7 +145,7 @@ const Validation: React.FC = () => {
                         sx={{ mb: 3, borderRadius: 2, fontWeight: 500, borderLeft: `4px solid ${isReady ? '#10B981' : '#EF4444'}` }}>
                         {isReady
                             ? 'Deployment Ready — No critical blockers found. You can proceed with deployment.'
-                            : `Not Ready — ${counts.blocker} blocker${counts.blocker > 1 ? 's' : ''} must be resolved before deployment.`}
+                            : `Not Ready — ${counts.blocker} blocker${counts.blocker > 1 ? 's' : ''} must be resolved before deployment. Remove fields that are not applicable to dismiss them.`}
                     </Alert>
 
                     {/* Severity KPI cards */}
@@ -137,9 +173,27 @@ const Validation: React.FC = () => {
                     <Card>
                         <CardContent sx={{ p: 0 }}>
                             <Box sx={{ px: 3, pt: 2.5, borderBottom: '1px solid #F3F4F6' }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
                                     <Typography variant="h5">Findings</Typography>
-                                    <Typography variant="caption" color="text.secondary">{filtered.length} of {allFindings.length}</Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Typography variant="caption" color="text.secondary">{filtered.length} of {allFindings.length} shown</Typography>
+                                        {filtered.length > 0 && (
+                                            <Tooltip title={`Remove all ${filtered.length} visible findings`}>
+                                                <Button
+                                                    size="small"
+                                                    variant="outlined"
+                                                    startIcon={<DeleteOutline sx={{ fontSize: 14 }} />}
+                                                    onClick={handleDismissAll}
+                                                    sx={{
+                                                        borderColor: '#FECACA', color: '#EF4444', fontSize: '0.75rem', height: 28,
+                                                        '&:hover': { bgcolor: '#FEF2F2', borderColor: '#EF4444' }
+                                                    }}
+                                                >
+                                                    Remove all ({filtered.length})
+                                                </Button>
+                                            </Tooltip>
+                                        )}
+                                    </Box>
                                 </Box>
 
                                 {/* Severity tabs */}
@@ -186,7 +240,7 @@ const Validation: React.FC = () => {
                                         <Accordion key={finding.id} elevation={0}
                                             sx={{ border: '1px solid #F3F4F6', borderRadius: '8px !important', mb: 1, '&:before': { display: 'none' } }}>
                                             <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2.5 }}>
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', flex: 1 }}>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', flex: 1, pr: 1 }}>
                                                     <Chip icon={cfg.icon as any} label={cfg.label} size="small"
                                                         sx={{ bgcolor: cfg.bg, color: cfg.color, fontWeight: 600, borderRadius: 1, border: 'none', minWidth: 80 }} />
                                                     <Chip
@@ -195,7 +249,18 @@ const Validation: React.FC = () => {
                                                         sx={{ bgcolor: '#F3F4F6', color: '#6B7280', fontSize: '0.6875rem', borderRadius: 1, textTransform: 'capitalize' }}
                                                     />
                                                     <Typography variant="body2" fontWeight={600} sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{finding.field}</Typography>
-                                                    <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>— {finding.message}</Typography>
+                                                    <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, flex: 1 }}>— {finding.message}</Typography>
+
+                                                    {/* Remove button — stop propagation so it doesn't toggle accordion */}
+                                                    <Tooltip title="Remove this finding (mark as handled)">
+                                                        <IconButton
+                                                            size="small"
+                                                            onClick={(e) => { e.stopPropagation(); handleDismissOne(finding.id, finding.field); }}
+                                                            sx={{ color: '#9CA3AF', flexShrink: 0, '&:hover': { color: '#EF4444', bgcolor: '#FEF2F2' } }}
+                                                        >
+                                                            <DeleteOutline sx={{ fontSize: 17 }} />
+                                                        </IconButton>
+                                                    </Tooltip>
                                                 </Box>
                                             </AccordionSummary>
                                             <AccordionDetails sx={{ px: 2.5, pt: 0 }}>
@@ -208,6 +273,19 @@ const Validation: React.FC = () => {
                                                     </Box>
                                                     <Typography variant="body2" color="#1A1D23">{finding.remediation}</Typography>
                                                 </Box>
+
+                                                {/* Inline remove CTA inside accordion */}
+                                                <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                                                    <Button
+                                                        size="small"
+                                                        variant="outlined"
+                                                        startIcon={<DeleteOutline sx={{ fontSize: 14 }} />}
+                                                        onClick={() => handleDismissOne(finding.id, finding.field)}
+                                                        sx={{ borderColor: '#FECACA', color: '#EF4444', '&:hover': { bgcolor: '#FEF2F2', borderColor: '#EF4444' } }}
+                                                    >
+                                                        Remove this field
+                                                    </Button>
+                                                </Box>
                                             </AccordionDetails>
                                         </Accordion>
                                     );
@@ -215,6 +293,58 @@ const Validation: React.FC = () => {
                             </Box>
                         </CardContent>
                     </Card>
+
+                    {/* ── Dismissed Findings Tray ───────────────────────────────────── */}
+                    {dismissedList.length > 0 && (
+                        <Card sx={{ mt: 2, border: '1px solid #E5E7EB' }}>
+                            <CardContent sx={{ p: 0 }}>
+                                <Box
+                                    sx={{ px: 3, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', '&:hover': { bgcolor: '#F9FAFB' } }}
+                                    onClick={() => setShowDismissed(v => !v)}
+                                >
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                        <RestoreFromTrash sx={{ fontSize: 18, color: '#9CA3AF' }} />
+                                        <Typography variant="body2" fontWeight={600} color="text.secondary">
+                                            {dismissedList.length} removed finding{dismissedList.length > 1 ? 's' : ''}
+                                        </Typography>
+                                        <Chip label={showDismissed ? 'Hide' : 'Show'} size="small" sx={{ fontSize: '0.6875rem', height: 20, bgcolor: '#F3F4F6', color: '#6B7280' }} />
+                                    </Box>
+                                    <Button
+                                        size="small"
+                                        startIcon={<RestoreFromTrash sx={{ fontSize: 14 }} />}
+                                        onClick={(e) => { e.stopPropagation(); handleRestoreAll(); }}
+                                        sx={{ color: '#6B7280', fontSize: '0.75rem' }}
+                                    >
+                                        Restore all
+                                    </Button>
+                                </Box>
+
+                                <Collapse in={showDismissed}>
+                                    <Divider />
+                                    <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                                        {dismissedList.map(finding => {
+                                            const cfg = SEVERITY_CONFIG[finding.severity];
+                                            return (
+                                                <Box key={finding.id}
+                                                    sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.25, bgcolor: '#F9FAFB', borderRadius: 1, border: '1px solid #F3F4F6', opacity: 0.75 }}>
+                                                    <Chip icon={cfg.icon as any} label={cfg.label} size="small"
+                                                        sx={{ bgcolor: cfg.bg, color: cfg.color, fontWeight: 600, borderRadius: 1, border: 'none', minWidth: 76, fontSize: '0.6875rem' }} />
+                                                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600, fontSize: '0.8125rem', flex: 1 }}>{finding.field}</Typography>
+                                                    <Typography variant="caption" color="text.disabled" sx={{ display: { xs: 'none', sm: 'block' }, flex: 1 }}>{finding.message}</Typography>
+                                                    <Tooltip title="Restore this finding">
+                                                        <IconButton size="small" onClick={() => handleRestoreOne(finding.id, finding.field)}
+                                                            sx={{ color: '#9CA3AF', '&:hover': { color: '#10B981', bgcolor: '#F0FDF4' } }}>
+                                                            <RestoreFromTrash sx={{ fontSize: 16 }} />
+                                                        </IconButton>
+                                                    </Tooltip>
+                                                </Box>
+                                            );
+                                        })}
+                                    </Box>
+                                </Collapse>
+                            </CardContent>
+                        </Card>
+                    )}
                 </>
             )}
         </PageShell>
