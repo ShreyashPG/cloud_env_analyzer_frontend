@@ -1,0 +1,346 @@
+{
+    "templates": [
+        {
+            "id": "aws",
+            "name": "AWS Environment",
+            "provider": "aws",
+            "fields": [
+                "region",
+                "accountId",
+                "accessKeyId",
+                "secretAccessKey",
+                "vpcId",
+                "subnetId",
+                "securityGroupId",
+                "iamRoleArn",
+                "s3BucketName",
+                "ecrRepositoryUri",
+                "eksClusterName",
+                "rdsEndpoint",
+                "elasticacheEndpoint",
+                "cloudfrontDistributionId",
+                "route53HostedZoneId",
+                "acmCertificateArn",
+                "kmsKeyId",
+                "snsTopicArn",
+                "sqsQueueUrl",
+                "cloudwatchLogGroupName"
+            ]
+        },
+        {
+            "id": "gcp",
+            "name": "GCP Environment",
+            "provider": "gcp",
+            "fields": [
+                "projectId",
+                "region",
+                "zone",
+                "serviceAccountEmail",
+                "serviceAccountKeyPath",
+                "vpcNetworkName",
+                "subnetName",
+                "firewallRuleName",
+                "gkeClusternName",
+                "gcsBucketName",
+                "bigqueryDatasetId",
+                "cloudSqlInstanceName",
+                "pubsubTopicName",
+                "pubsubSubscriptionName",
+                "cloudRunServiceName",
+                "artifactRegistryRepo",
+                "secretManagerSecretName",
+                "cloudArmorPolicyName",
+                "loadBalancerName",
+                "dnsZoneName"
+            ]
+        },
+        {
+            "id": "azure",
+            "name": "Azure Environment",
+            "provider": "azure",
+            "fields": [
+                "subscriptionId",
+                "tenantId",
+                "clientId",
+                "clientSecret",
+                "resourceGroupName",
+                "location",
+                "vnetName",
+                "subnetName",
+                "nsgName",
+                "aksClusterName",
+                "acrLoginServer",
+                "storageAccountName",
+                "cosmosDbEndpoint",
+                "serviceBusNamespace",
+                "eventHubNamespace",
+                "keyVaultUri",
+                "appServicePlanName",
+                "functionAppName",
+                "logAnalyticsWorkspaceId",
+                "applicationInsightsKey"
+            ]
+        }
+    ],
+    "validations": [
+        {
+            "id": "val-aws-001",
+            "extractionId": "prereq-aws-001",
+            "templateId": "aws",
+            "status": "mismatch",
+            "validatedAt": "2026-03-01T07:12:00Z",
+            "findings": [
+                {
+                    "id": "f-001",
+                    "field": "iamRoleArn",
+                    "severity": "blocker",
+                    "domain": "identity",
+                    "message": "IAM role 'AIAssistDeployRole' does not have the required 'eks:DescribeCluster' permission needed for deployment.",
+                    "remediation": "Attach the AmazonEKSReadOnlyAccess policy to the role, or add a custom policy with 'eks:DescribeCluster', 'eks:ListNodegroups', and 'eks:DescribeNodegroup' actions."
+                },
+                {
+                    "id": "f-002",
+                    "field": "securityGroupId",
+                    "severity": "blocker",
+                    "domain": "network",
+                    "message": "Security group 'sg-0abc123def456789' blocks inbound port 443 from AI Assist agent CIDR range (10.0.0.0/8).",
+                    "remediation": "Add an inbound rule allowing TCP port 443 from 10.0.0.0/8 in the target security group."
+                },
+                {
+                    "id": "f-003",
+                    "field": "vpcId",
+                    "severity": "warning",
+                    "domain": "network",
+                    "message": "VPC does not have an S3 Gateway endpoint configured. Traffic to S3 will route over the public internet.",
+                    "remediation": "Create a VPC Gateway Endpoint for S3 to keep traffic internal."
+                },
+                {
+                    "id": "f-004",
+                    "field": "cloudwatchLogGroupName",
+                    "severity": "warning",
+                    "domain": "policy",
+                    "message": "CloudWatch log group retention is not set. Logs will be retained indefinitely.",
+                    "remediation": "Set log retention to 90 days for the EKS log group."
+                },
+                {
+                    "id": "f-005",
+                    "field": "eksClusterName",
+                    "severity": "blocker",
+                    "domain": "services",
+                    "message": "EKS cluster Kubernetes version is 1.24, which is below the minimum required 1.26.",
+                    "remediation": "Upgrade the EKS cluster to Kubernetes 1.28+."
+                },
+                {
+                    "id": "f-006",
+                    "field": "rdsEndpoint",
+                    "severity": "warning",
+                    "domain": "resources",
+                    "message": "RDS instance is using db.t3.micro which may not meet performance requirements.",
+                    "remediation": "Upgrade to db.t3.large for production workloads."
+                }
+            ]
+        }
+    ],
+    "scanResults": [
+        {
+            "id": "sr-001",
+            "provider": "aws",
+            "environment": "production",
+            "scannedAt": "2026-03-01T06:04:30Z",
+            "data": {
+                "region": "us-east-1",
+                "accountId": "123456789012",
+                "vpcId": "vpc-0abc123def456789",
+                "subnetId": "subnet-0abc123def456789",
+                "securityGroupId": "sg-0abc123def456789",
+                "iamRoleArn": "arn:aws:iam::123456789012:role/AIAssistDeployRole",
+                "s3BucketName": "aiassist-production-data",
+                "eksClusterName": "aiassist-eks-prod",
+                "rdsEndpoint": "aiassist-db.cluster-xyz.us-east-1.rds.amazonaws.com",
+                "kmsKeyId": "arn:aws:kms:us-east-1:123456789012:key/abc123-def456"
+            },
+            "permissions": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:ListBucket",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeSubnets",
+                "logs:CreateLogGroup",
+                "logs:PutLogEvents"
+            ],
+            "roles": [
+                "AIAssistDeployRole",
+                "AmazonEKSWorkerNodePolicy"
+            ],
+            "networkRules": [
+                {
+                    "port": 443,
+                    "cidr": "0.0.0.0/0",
+                    "direction": "outbound",
+                    "allowed": true
+                },
+                {
+                    "port": 80,
+                    "cidr": "0.0.0.0/0",
+                    "direction": "outbound",
+                    "allowed": true
+                },
+                {
+                    "port": 443,
+                    "cidr": "10.0.0.0/8",
+                    "direction": "inbound",
+                    "allowed": false
+                },
+                {
+                    "port": 22,
+                    "cidr": "10.0.0.0/8",
+                    "direction": "inbound",
+                    "allowed": false
+                }
+            ]
+        }
+    ],
+    "scans": [
+        {
+            "id": "scan-001",
+            "provider": "aws",
+            "status": "completed",
+            "startedAt": "2026-03-01T06:00:00Z",
+            "completedAt": "2026-03-01T06:04:30Z",
+            "resourceCount": 147,
+            "issueCount": 3,
+            "environment": "production",
+            "scope": "us-east-1"
+        },
+        {
+            "id": "scan-002",
+            "provider": "azure",
+            "status": "completed",
+            "startedAt": "2026-02-28T14:00:00Z",
+            "completedAt": "2026-02-28T14:03:15Z",
+            "resourceCount": 89,
+            "issueCount": 7,
+            "environment": "staging",
+            "scope": "East US"
+        },
+        {
+            "id": "scan-003",
+            "provider": "gcp",
+            "status": "failed",
+            "startedAt": "2026-02-27T10:00:00Z",
+            "completedAt": "2026-02-27T10:01:10Z",
+            "resourceCount": 0,
+            "issueCount": 0,
+            "environment": "dev",
+            "error": "Authentication failed: invalid service account credentials"
+        }
+    ],
+    "dashboard": [
+        {
+            "id": "stats",
+            "totalScans": 12,
+            "totalExtractions": 34,
+            "totalValidations": 28,
+            "totalIssues": 19,
+            "deploymentsReady": 22,
+            "lastScanAt": "2026-03-01T06:04:30Z",
+            "providerDistribution": {
+                "aws": 8,
+                "azure": 3,
+                "gcp": 1
+            }
+        }
+    ],
+    "auditLogs": [
+        {
+            "id": "log-001",
+            "timestamp": "2026-03-01T06:00:00Z",
+            "level": "info",
+            "module": "Scanner",
+            "action": "scan_started",
+            "result": "Scan initiated for AWS/production",
+            "durationMs": 12
+        },
+        {
+            "id": "log-002",
+            "timestamp": "2026-03-01T06:00:12Z",
+            "level": "info",
+            "module": "Auth",
+            "action": "authenticate",
+            "result": "Service principal authenticated successfully",
+            "durationMs": 340
+        },
+        {
+            "id": "log-003",
+            "timestamp": "2026-03-01T06:00:52Z",
+            "level": "info",
+            "module": "IAM",
+            "action": "list_roles",
+            "result": "Retrieved 47 IAM roles",
+            "durationMs": 1820
+        },
+        {
+            "id": "log-004",
+            "timestamp": "2026-03-01T06:01:30Z",
+            "level": "warn",
+            "module": "IAM",
+            "action": "check_permissions",
+            "result": "Role AIAssistDeployRole missing 3 required permissions",
+            "durationMs": 620
+        },
+        {
+            "id": "log-005",
+            "timestamp": "2026-03-01T06:02:10Z",
+            "level": "info",
+            "module": "Network",
+            "action": "describe_vpcs",
+            "result": "VPC vpc-0abc123def456789 analyzed",
+            "durationMs": 980
+        },
+        {
+            "id": "log-006",
+            "timestamp": "2026-03-01T06:02:45Z",
+            "level": "warn",
+            "module": "Network",
+            "action": "check_sg_rules",
+            "result": "Security group blocks port 443 for required CIDR",
+            "durationMs": 430
+        },
+        {
+            "id": "log-007",
+            "timestamp": "2026-03-01T06:03:20Z",
+            "level": "info",
+            "module": "Services",
+            "action": "describe_eks_cluster",
+            "result": "EKS cluster version 1.24 detected",
+            "durationMs": 750
+        },
+        {
+            "id": "log-008",
+            "timestamp": "2026-03-01T06:03:21Z",
+            "level": "error",
+            "module": "Services",
+            "action": "validate_eks_version",
+            "result": "Kubernetes 1.24 is below minimum required 1.26",
+            "durationMs": 8
+        },
+        {
+            "id": "log-009",
+            "timestamp": "2026-03-01T06:04:00Z",
+            "level": "info",
+            "module": "Reporter",
+            "action": "generate_report",
+            "result": "Compatibility report generated: 3 blockers, 3 warnings",
+            "durationMs": 290
+        },
+        {
+            "id": "log-010",
+            "timestamp": "2026-03-01T06:04:30Z",
+            "level": "success",
+            "module": "Scanner",
+            "action": "scan_completed",
+            "result": "Scan completed in 264 seconds — 147 resources inventoried",
+            "durationMs": 0
+        }
+    ]
+}
