@@ -1,31 +1,19 @@
 import client from './client';
-import type { Scan } from './types';
-import { sleep, generateId } from '../lib/utils';
+import type { StartScanRequest, StartScanResponse, ValidationReport } from './types';
 
-export async function getScans(): Promise<Scan[]> {
-    const { data } = await client.get<Scan[]>('/scans');
+/**
+ * Start an Azure scan for the given document's approved prerequisites.
+ * Returns job_id to poll.
+ */
+export async function startScan(params: StartScanRequest): Promise<StartScanResponse> {
+    const { data } = await client.post<StartScanResponse>('/scans', params);
     return data;
 }
 
-export async function startScan(params: {
-    provider: string;
-    environment: string;
-    credentials: Record<string, string>;
-}): Promise<Scan> {
-    const newScan: Partial<Scan> = {
-        id: `scan-${generateId()}`,
-        provider: params.provider as Scan['provider'],
-        status: 'running',
-        startedAt: new Date().toISOString(),
-        resourceCount: 0,
-        issueCount: 0,
-        environment: params.environment,
-    };
-    await sleep(500);
-    return newScan as Scan;
-}
-
-export async function getScan(id: string): Promise<Scan> {
-    const { data } = await client.get<Scan>(`/scans/${id}`);
+/**
+ * Fetch the full validation report by its ID.
+ */
+export async function getReport(reportId: string): Promise<ValidationReport> {
+    const { data } = await client.get<ValidationReport>(`/reports/${reportId}`);
     return data;
 }

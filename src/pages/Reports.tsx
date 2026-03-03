@@ -1,107 +1,170 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-    Box, Card, CardContent, Typography, Button,
-    Divider, Chip, Breadcrumbs, Table, TableBody, TableCell,
-    TableContainer, TableHead, TableRow, Tab, Tabs,
+    Box, Card, CardContent, Typography, Breadcrumbs, Chip, Alert,
+    LinearProgress, Table, TableBody, TableCell, TableHead, TableRow,
+    TableContainer, Button,
 } from '@mui/material';
-import { NavigateNext, Download, PictureAsPdf, Description, QueryStats } from '@mui/icons-material';
-import { formatDateTime } from '../lib/formatters';
+import { Grid } from '@mui/material';
+import { NavigateNext, CheckCircle, ErrorOutline, ArrowBack } from '@mui/icons-material';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useSnackbar } from 'notistack';
 import PageShell from '../components/layout/PageShell';
-import AuditLog from '../components/audit/AuditLog';
+import { getReport } from '../api/scan';
+import { useScanStore } from '../store/scanStore';
+import type { ValidationReport, Finding, FindingStatus, Severity } from '../api/types';
+import { formatDateTime } from '../lib/formatters';
 
-const MOCK_REPORTS = [
-    { id: 'r-001', name: 'AWS Production Scan — March 2026', provider: 'aws', type: 'Compatibility Report', status: 'passed', date: '2026-03-01T06:04:30Z', size: '1.2 MB', format: 'PDF' },
-    { id: 'r-002', name: 'Azure Staging Config Extraction', provider: 'azure', type: 'Extraction Report', status: 'mismatch', date: '2026-02-28T14:03:15Z', size: '0.8 MB', format: 'JSON' },
-    { id: 'r-003', name: 'GCP Dev Scan — Failed Auth', provider: 'gcp', type: 'Scan Error Log', status: 'failed', date: '2026-02-27T10:01:10Z', size: '0.2 MB', format: 'JSON' },
-];
-
-const STATUS = {
-    passed: { color: 'success' as const, label: 'Passed' },
-    mismatch: { color: 'warning' as const, label: 'Mismatch' },
-    failed: { color: 'error' as const, label: 'Failed' },
+const STATUS_CHIP: Record<FindingStatus, { color: string; bg: string }> = {
+    pass: { color: '#10B981', bg: '#ECFDF5' },
+    fail: { color: '#EF4444', bg: '#FEF2F2' },
+    error: { color: '#F59E0B', bg: '#FFFBEB' },
+    skipped: { color: '#6B7280', bg: '#F3F4F6' },
 };
-
-const PROVIDER_COLORS: Record<string, string> = { aws: '#FF9900', gcp: '#4285F4', azure: '#0078D4' };
+const SEV_COLOR: Record<Severity, string> = { critical: '#EF4444', high: '#F59E0B', medium: '#2563EB', low: '#10B981' };
 
 const Reports: React.FC = () => {
-    const [tab, setTab] = useState(0);
+    const location = useLocation();
+    const navigate = useNavigate();
+    const { enqueueSnackbar } = useSnackbar();
+    const { report: storeReport, reportId: storeReportId } = useScanStore();
+
+    const resolvedReportId = (location.state as any)?.reportId ?? storeReportId;
+
+    const [report, setReport] = useState<ValidationReport | null>(storeReport);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (resolvedReportId && !report) {
+            setLoading(true);
+            getReport(resolvedReportId)
+                .then(setReport)
+                .catch((err: any) => enqueueSnackbar(err.message ?? 'Failed to load report', { variant: 'error' }))
+                .finally(() => setLoading(false));
+        }
+    }, [resolvedReportId]);
 
     return (
         <PageShell>
             <Breadcrumbs separator={<NavigateNext fontSize="small" sx={{ color: '#9CA3AF' }} />} sx={{ mb: 1 }}>
                 <Typography component="a" href="/" sx={{ fontSize: '0.8125rem', color: 'text.secondary', textDecoration: 'none' }}>Dashboard</Typography>
-                <Typography sx={{ fontSize: '0.8125rem', color: 'text.primary', fontWeight: 500 }}>Reports</Typography>
+                <Typography sx={{ fontSize: '0.8125rem', color: 'text.primary', fontWeight: 500 }}>Report</Typography>
             </Breadcrumbs>
 
-            <Box sx={{ mb: 4 }}>
-                <Typography variant="h1" sx={{ fontSize: { xs: '1.375rem', md: '1.75rem' }, fontWeight: 600, mb: 0.5 }}>Reports & Audit</Typography>
-                <Typography variant="body2" color="text.secondary">Download analysis reports and review structured audit logs of all scan activity.</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 4, flexWrap: 'wrap', gap: 2 }}>
+                <Box>
+                    <Typography variant="h1" sx={{ fontSize: { xs: '1.375rem', md: '1.75rem' }, fontWeight: 600, mb: 0.5 }}>Full Validation Report</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        {report ? `Generated ${formatDateTime(report.generated_at)} · ${report.cloud_provider.toUpperCase()} · ${report.region}` : 'Azure prerequisite validation results.'}
+                    </Typography>
+                </Box>
+                <Button startIcon={<ArrowBack sx={{ fontSize: 14 }} />} onClick={() => navigate('/scan')} size="small" variant="outlined" sx={{ borderColor: '#E4E7EC', color: 'text.secondary' }}>Back to Scan</Button>
             </Box>
 
-            {/* Tabs */}
-            <Box sx={{ borderBottom: '1px solid #F3F4F6', mb: 3 }}>
-                <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-                    <Tab label="Reports" sx={{ textTransform: 'none', fontSize: '0.875rem' }} />
-                    <Tab label={<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}><QueryStats sx={{ fontSize: 16 }} /> Audit Log</Box>} sx={{ textTransform: 'none', fontSize: '0.875rem' }} />
-                </Tabs>
-            </Box>
-
-            {tab === 0 && (
-                <Card>
-                    <CardContent sx={{ p: 0 }}>
-                        <Box sx={{ px: 3, py: 2.5, borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Typography variant="h5">All Reports</Typography>
-                            <Typography variant="caption" color="text.secondary">{MOCK_REPORTS.length} reports</Typography>
-                        </Box>
-                        <TableContainer>
-                            <Table>
-                                <TableHead>
-                                    <TableRow>
-                                        <TableCell>Report</TableCell>
-                                        <TableCell>Provider</TableCell>
-                                        <TableCell>Type</TableCell>
-                                        <TableCell>Status</TableCell>
-                                        <TableCell>Size</TableCell>
-                                        <TableCell>Date</TableCell>
-                                        <TableCell align="right">Action</TableCell>
-                                    </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                    {MOCK_REPORTS.map((r) => {
-                                        const sc = STATUS[r.status as keyof typeof STATUS];
-                                        return (
-                                            <TableRow key={r.id} hover>
-                                                <TableCell>
-                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                                        <Box sx={{ color: r.format === 'PDF' ? '#EF4444' : '#2563EB' }}>
-                                                            {r.format === 'PDF' ? <PictureAsPdf /> : <Description />}
-                                                        </Box>
-                                                        <Typography variant="body2" fontWeight={500}>{r.name}</Typography>
-                                                    </Box>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Chip label={r.provider.toUpperCase()} size="small" sx={{ color: PROVIDER_COLORS[r.provider], fontWeight: 700, fontSize: '0.6875rem', borderRadius: 1 }} variant="outlined" />
-                                                </TableCell>
-                                                <TableCell><Typography variant="body2">{r.type}</Typography></TableCell>
-                                                <TableCell>
-                                                    <Chip label={sc.label} size="small" color={sc.color} variant="outlined" sx={{ borderRadius: 99, fontSize: '0.75rem' }} />
-                                                </TableCell>
-                                                <TableCell><Typography variant="body2" color="text.secondary">{r.size}</Typography></TableCell>
-                                                <TableCell><Typography variant="caption" color="text.secondary">{formatDateTime(r.date)}</Typography></TableCell>
-                                                <TableCell align="right">
-                                                    <Button size="small" startIcon={<Download sx={{ fontSize: 14 }} />} sx={{ fontSize: '0.8125rem', color: 'primary.main' }}>Download</Button>
-                                                </TableCell>
-                                            </TableRow>
-                                        );
-                                    })}
-                                </TableBody>
-                            </Table>
-                        </TableContainer>
+            {loading && (
+                <Card sx={{ mb: 3 }}>
+                    <CardContent sx={{ p: 3 }}>
+                        <Typography variant="body2" gutterBottom>Loading report…</Typography>
+                        <LinearProgress />
                     </CardContent>
                 </Card>
             )}
 
-            {tab === 1 && <AuditLog />}
+            {!loading && !report && !resolvedReportId && (
+                <Alert severity="info" sx={{ mt: 4 }}>
+                    No report generated yet. <Typography component="span" sx={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('/scan')}>Run a scan first →</Typography>
+                </Alert>
+            )}
+
+            {!loading && report && (
+                <>
+                    {/* Readiness banner */}
+                    <Alert
+                        severity={report.summary.deployment_ready ? 'success' : 'error'}
+                        icon={report.summary.deployment_ready ? <CheckCircle /> : <ErrorOutline />}
+                        sx={{ mb: 3, borderRadius: 2, fontWeight: 500 }}
+                    >
+                        {report.summary.deployment_ready
+                            ? 'Environment is deployment ready — all critical checks passed.'
+                            : `${report.summary.critical_failures} critical and ${report.summary.high_failures} high failures must be resolved.`}
+                    </Alert>
+
+                    {/* Summary cards */}
+                    <Grid container spacing={2} sx={{ mb: 3 }}>
+                        {[
+                            { label: 'Total Checks', value: report.summary.total, color: '#374151', bg: '#F9FAFB' },
+                            { label: 'Passed', value: report.summary.passed, color: '#10B981', bg: '#ECFDF5' },
+                            { label: 'Failed', value: report.summary.failed, color: '#EF4444', bg: '#FEF2F2' },
+                            { label: 'Critical Failures', value: report.summary.critical_failures, color: '#991B1B', bg: '#FEE2E2' },
+                            { label: 'High Failures', value: report.summary.high_failures, color: '#B45309', bg: '#FEF3C7' },
+                            { label: 'Skipped', value: report.summary.skipped, color: '#6B7280', bg: '#F3F4F6' },
+                        ].map((item) => (
+                            <Grid key={item.label} size={{ xs: 6, sm: 4, md: 2 }}>
+                                <Box sx={{ p: 2, bgcolor: item.bg, borderRadius: 2, textAlign: 'center' }}>
+                                    <Typography variant="h4" sx={{ fontSize: '1.5rem', fontWeight: 700, color: item.color }}>{item.value}</Typography>
+                                    <Typography variant="caption" fontWeight={600} color="text.secondary">{item.label}</Typography>
+                                </Box>
+                            </Grid>
+                        ))}
+                    </Grid>
+
+                    {/* All findings by status sections */}
+                    {(['fail', 'error', 'pass', 'skipped'] as FindingStatus[]).map((status) => {
+                        const findings = report.findings_by_status[status] ?? [];
+                        if (findings.length === 0) return null;
+                        const sc = STATUS_CHIP[status];
+                        return (
+                            <Card key={status} sx={{ mb: 2 }}>
+                                <CardContent sx={{ p: 0 }}>
+                                    <Box sx={{ px: 3, py: 2.5, borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Chip label={status.toUpperCase()} size="small" sx={{ bgcolor: sc.bg, color: sc.color, fontWeight: 700, borderRadius: 1 }} />
+                                        <Typography variant="h6">{findings.length} finding{findings.length !== 1 ? 's' : ''}</Typography>
+                                    </Box>
+                                    <TableContainer>
+                                        <Table size="small">
+                                            <TableHead>
+                                                <TableRow>
+                                                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>Severity</TableCell>
+                                                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>Attribute</TableCell>
+                                                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>Operator</TableCell>
+                                                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>Expected</TableCell>
+                                                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>Actual</TableCell>
+                                                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>Resource</TableCell>
+                                                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>Reason</TableCell>
+                                                </TableRow>
+                                            </TableHead>
+                                            <TableBody>
+                                                {findings.map((f: Finding) => (
+                                                    <TableRow key={f.id} hover>
+                                                        <TableCell>
+                                                            <Chip label={f.severity} size="small" sx={{ bgcolor: SEV_COLOR[f.severity] + '20', color: SEV_COLOR[f.severity], fontWeight: 600, borderRadius: 1, fontSize: '0.6875rem' }} />
+                                                        </TableCell>
+                                                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{f.condition.attribute}</TableCell>
+                                                        <TableCell>
+                                                            <Chip label={f.condition.operator} size="small" sx={{ bgcolor: '#EFF6FF', color: '#1D4ED8', fontWeight: 600, borderRadius: 1, fontSize: '0.6875rem' }} />
+                                                        </TableCell>
+                                                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>
+                                                            {f.expected_value !== null && f.expected_value !== undefined ? String(f.expected_value) : '—'}
+                                                        </TableCell>
+                                                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8125rem', color: status === 'fail' ? '#EF4444' : 'inherit' }}>
+                                                            {f.actual_value !== null && f.actual_value !== undefined ? String(f.actual_value) : <em style={{ color: '#9CA3AF' }}>not found</em>}
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Typography variant="caption" color="text.secondary">{f.resource_name ?? '—'}</Typography>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Typography variant="caption" color="text.secondary">{f.reason}</Typography>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ))}
+                                            </TableBody>
+                                        </Table>
+                                    </TableContainer>
+                                </CardContent>
+                            </Card>
+                        );
+                    })}
+                </>
+            )}
         </PageShell>
     );
 };

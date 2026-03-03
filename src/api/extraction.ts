@@ -1,64 +1,27 @@
 import client from './client';
-import type { CloudTemplate, Extraction, UploadResponse } from './types';
-import { sleep, generateId } from '../lib/utils';
+import type { UploadResponse, PrerequisitesResponse } from './types';
 
-// ─── Fetch available templates ────────────────────────────
-export async function getTemplates(): Promise<CloudTemplate[]> {
-    const { data } = await client.get<CloudTemplate[]>('/templates');
+/**
+ * Upload PDF/DOCX prerequisites document.
+ * Returns job_id to poll + document_id.
+ */
+export async function uploadDocument(file: File): Promise<UploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const { data } = await client.post<UploadResponse>('/documents', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120_000, // uploads can be slow
+    });
     return data;
 }
 
-// ─── Simulate file upload (returns after fake delay) ─────
-export async function uploadConfigFile(
-    file: File,
-    onProgress: (pct: number) => void,
-    templateId: string
-): Promise<UploadResponse> {
-    // Simulate chunked upload with progress ticks
-    for (let i = 10; i <= 100; i += 10) {
-        await sleep(220);
-        onProgress(i);
-    }
-    // In a real scenario this would be a multipart/form-data POST
-    return {
-        jobId: `job-${generateId()}`,
-        fileId: `file-${generateId()}`,
-        filename: file.name,
-        size: file.size,
-        templateId,
-    } as UploadResponse & { templateId: string };
-}
-
-// ─── Simulate extraction (returns after fake delay) ────────
-export async function triggerExtraction(
-    fileId: string,
-    templateId: string,
-    onProgress: (pct: number) => void
-): Promise<Extraction> {
-    for (let i = 10; i <= 100; i += 10) {
-        await sleep(280);
-        onProgress(i);
-    }
-    // fetch the pre-seeded extraction from JSON server
-    const { data } = await client.get<Extraction[]>('/extractions');
-    const match = data.find((e) => e.templateId === templateId);
-    if (match) return match;
-    // fallback — use first extraction
-    return data[0];
-}
-
-// ─── Get extraction by id ──────────────────────────────────
-export async function getExtraction(id: string): Promise<Extraction> {
-    const { data } = await client.get<Extraction>(`/extractions/${id}`);
+/**
+ * Get all prerequisites for a document grouped by review status.
+ */
+export async function getPrerequisites(documentId: string): Promise<PrerequisitesResponse> {
+    const { data } = await client.get<PrerequisitesResponse>(
+        `/documents/${documentId}/prerequisites`
+    );
     return data;
-}
-
-// ─── Remove a mismatch field from extraction data ─────────
-export async function removeMismatchField(
-    extractionId: string,
-    field: string
-): Promise<void> {
-    // Simulate removal — in real app would PATCH the extraction
-    await sleep(200);
-    console.log(`[API] Removed field "${field}" from extraction ${extractionId}`);
 }

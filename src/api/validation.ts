@@ -1,21 +1,27 @@
 import client from './client';
-import type { Validation } from './types';
-import { sleep } from '../lib/utils';
+import type { ReviewItem, ReviewResolution } from './types';
 
-export async function validateExtraction(extractionId: string): Promise<Validation> {
-    await sleep(800);
-    const { data } = await client.get<Validation[]>('/validations');
-    const match = data.find((v) => v.extractionId === extractionId);
-    if (match) return match;
-    return data[0];
+/**
+ * List review items, optionally filtered by document_id.
+ */
+export async function listReviewItems(documentId?: string): Promise<ReviewItem[]> {
+    const params = documentId ? { document_id: documentId } : {};
+    const { data } = await client.get<{ items: ReviewItem[]; total: number }>('/review', { params });
+    return data.items;
 }
 
-export async function getValidation(id: string): Promise<Validation> {
-    const { data } = await client.get<Validation>(`/validations/${id}`);
-    return data;
-}
-
-export async function dismissFinding(validationId: string, findingId: string): Promise<void> {
-    await sleep(200);
-    console.log(`[API] Dismissed finding ${findingId} in validation ${validationId}`);
+/**
+ * Resolve a review item.
+ */
+export async function resolveReviewItem(
+    itemId: string,
+    resolution: ReviewResolution,
+    note?: string,
+    modifiedConditions?: unknown[]
+): Promise<void> {
+    await client.post(`/review/${itemId}/resolve`, {
+        resolution,
+        note: note ?? null,
+        modified_conditions: modifiedConditions ?? null,
+    });
 }

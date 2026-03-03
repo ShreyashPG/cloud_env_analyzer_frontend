@@ -40,7 +40,7 @@ export const PREREQ_MIME_TYPES = [
 
 export const MAX_FILE_SIZE_MB = 50;
 
-export const API_BASE_URL = 'http://localhost:3001';
+export const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 // 3-step workflow
 export const STEPS = ['Upload', 'Extract', 'Validate'];

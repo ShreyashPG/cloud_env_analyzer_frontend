@@ -1,41 +1,56 @@
 import { create } from 'zustand';
-import type { Scan, ScanResult } from '../api/types';
+import type { ValidationReport } from '../api/types';
 
 interface ScanState {
-    scans: Scan[];
-    activeScan: Scan | null;
-    scanResult: ScanResult | null;   // full live data from completed scan
+    // Scan job tracking
+    scanJobId: string | null;
+    documentId: string | null;
     isScanning: boolean;
     scanProgress: number;
     currentStep: string;
     error: string | null;
 
-    setScans: (s: Scan[]) => void;
-    setActiveScan: (s: Scan | null) => void;
-    setScanResult: (r: ScanResult | null) => void;
+    // Completed report
+    report: ValidationReport | null;
+    reportId: string | null;
+
+    // Actions
+    setScanJobId: (id: string | null) => void;
+    setDocumentId: (id: string | null) => void;
     setIsScanning: (b: boolean) => void;
-    setScanProgress: (n: number) => void;
-    setCurrentStep: (s: string) => void;
+    setScanProgress: (n: number, step?: string) => void;
+    setReport: (r: ValidationReport | null) => void;
+    setReportId: (id: string | null) => void;
     setError: (e: string | null) => void;
     reset: () => void;
 }
 
 export const useScanStore = create<ScanState>((set) => ({
-    scans: [],
-    activeScan: null,
-    scanResult: null,
+    scanJobId: null,
+    documentId: null,
     isScanning: false,
     scanProgress: 0,
     currentStep: '',
     error: null,
+    report: null,
+    reportId: null,
 
-    setScans: (s) => set({ scans: s }),
-    setActiveScan: (s) => set({ activeScan: s }),
-    setScanResult: (r) => set({ scanResult: r }),
+    setScanJobId: (id) => set({ scanJobId: id }),
+    setDocumentId: (id) => set({ documentId: id }),
     setIsScanning: (b) => set({ isScanning: b }),
-    setScanProgress: (n) => set({ scanProgress: n }),
-    setCurrentStep: (s) => set({ currentStep: s }),
+    setScanProgress: (n, step) =>
+        set((s) => ({ scanProgress: n, currentStep: step ?? s.currentStep })),
+    setReport: (r) => set({ report: r }),
+    setReportId: (id) => set({ reportId: id }),
     setError: (e) => set({ error: e }),
     reset: () =>
-        set({ activeScan: null, scanResult: null, isScanning: false, scanProgress: 0, currentStep: '', error: null }),
+        set({
+            scanJobId: null,
+            isScanning: false,
+            scanProgress: 0,
+            currentStep: '',
+            error: null,
+            report: null,
+            reportId: null,
+        }),
 }));

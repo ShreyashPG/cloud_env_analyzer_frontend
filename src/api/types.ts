@@ -1,147 +1,135 @@
 // ─────────────── Cloud Provider ───────────────
 export type CloudProvider = 'aws' | 'gcp' | 'azure';
 
-// ─────────────── Template ────────────────────
-export interface CloudTemplate {
-    id: string;
-    name: string;
-    provider: CloudProvider;
-    fields: string[];
-}
-
-// ─────────────── Prereq Doc Extraction ───────
-export interface PrereqExtraction {
-    id: string;
-    filename: string;
-    extractedAt: string;
-    provider: CloudProvider;
-    /** Full key→value map extracted from the document */
-    data: Record<string, string | Record<string, string>>;
-    /** Field keys that are NOT found in the cloud provider template */
-    mismatches: string[];
-}
-
 // ─────────────── Job ─────────────────────────
-export type JobStatus = 'queued' | 'uploading' | 'extracting' | 'completed' | 'failed';
+export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
+
 export interface Job {
     id: string;
+    job_type: 'extraction' | 'scan';
     status: JobStatus;
-    progress: number;
-    phase: string;
-    createdAt: string;
-    completedAt?: string;
-    fileId: string;
-    error?: string;
+    progress_pct: number;
+    current_step: string;
+    error_message?: string | null;
+    result_id?: string | null;
+    created_at: string;
+    updated_at: string;
 }
 
-// ─────────────── Validation ──────────────────
-export type FindingSeverity = 'blocker' | 'warning' | 'info';
-export type FindingDomain = 'identity' | 'network' | 'policy' | 'resources' | 'services' | 'general';
-export type ValidationStatus = 'pending' | 'validating' | 'passed' | 'mismatch' | 'failed';
+// ─────────────── Conditions ──────────────────
+export interface Condition {
+    attribute: string;
+    operator: 'gte' | 'lte' | 'eq' | 'in' | 'exists' | 'contains' | 'not_eq' | 'regex';
+    expected_value: unknown;
+    unit?: string | null;
+}
+
+// ─────────────── Prerequisite ────────────────
+export type Intent = 'must_exist_before' | 'will_be_created' | 'must_not_exist' | 'optional';
+export type Severity = 'critical' | 'high' | 'medium' | 'low';
+export type ResourceCategory = 'compute' | 'storage' | 'networking' | 'database' | 'security' | 'services' | 'resources' | 'identity';
+
+export interface Prerequisite {
+    id: string;
+    category: ResourceCategory;
+    resource_type: string;
+    cloud_provider: CloudProvider;
+    intent: Intent;
+    severity: Severity;
+    conditions: Condition[];
+    source_text: string;
+    confidence: number;
+    review_required: boolean;
+    review_reason?: string | null;
+    extracted_at?: string;
+}
+
+// ─────────────── Document Upload ─────────────
+export interface UploadResponse {
+    job_id: string;
+    document_id: string;
+    message: string;
+}
+
+export interface PrerequisitesResponse {
+    document_id: string;
+    total: number;
+    approved: Prerequisite[];
+    pending_review: Prerequisite[];
+}
+
+// ─────────────── Review ──────────────────────
+export interface ReviewItem {
+    id: string;
+    prerequisite_id: string;
+    reason: string;
+    resolved: boolean;
+    resolution?: string | null;
+    reviewer_note?: string | null;
+    created_at: string;
+    prerequisite: Prerequisite | null;
+}
+
+export type ReviewResolution = 'approved' | 'rejected' | 'modified';
+
+// ─────────────── Scan ────────────────────────
+export interface StartScanRequest {
+    document_id: string;
+    resource_group?: string | null;
+    region?: string;
+}
+
+export interface StartScanResponse {
+    job_id: string;
+    document_id: string;
+    message: string;
+    approved_prerequisites: number;
+}
+
+// ─────────────── Findings / Report ───────────
+export type FindingStatus = 'pass' | 'fail' | 'error' | 'skipped';
 
 export interface Finding {
     id: string;
-    field: string;
-    severity: FindingSeverity;
-    domain: FindingDomain;
-    message: string;
-    remediation: string;
+    prerequisite_id: string;
+    resource_id?: string | null;
+    resource_name?: string | null;
+    condition: Condition;
+    status: FindingStatus;
+    severity: Severity;
+    actual_value?: unknown;
+    expected_value?: unknown;
+    reason: string;
 }
 
-export interface Validation {
-    id: string;
-    extractionId: string;
-    templateId: string;
-    status: ValidationStatus;
-    validatedAt?: string;
+export interface ReportSummary {
+    deployment_ready: boolean;
+    total: number;
+    passed: number;
+    failed: number;
+    errors: number;
+    skipped: number;
+    critical_failures: number;
+    high_failures: number;
+}
+
+export interface ValidationReport {
+    report_id: string;
+    scan_job_id: string;
+    cloud_provider: CloudProvider;
+    region: string;
+    generated_at: string;
+    summary: ReportSummary;
     findings: Finding[];
+    findings_by_status: Record<FindingStatus, Finding[]>;
 }
 
-// ─────────────── Scan ────────────────────────
-export type ScanStatus = 'pending' | 'running' | 'completed' | 'failed';
-
-export interface ScanResult {
-    provider: CloudProvider;
-    environment: string;
-    scannedAt: string;
-    /** Live environment data returned by the scan */
-    data: Record<string, unknown>;
-    /** Permissions/roles/rules found */
-    permissions: string[];
-    roles: string[];
-    networkRules: Array<{ port: number; cidr: string; direction: 'inbound' | 'outbound'; allowed: boolean }>;
-}
-
-export interface Scan {
-    id: string;
-    provider: CloudProvider;
-    status: ScanStatus;
-    startedAt: string;
-    completedAt?: string;
-    resourceCount: number;
-    issueCount: number;
-    environment: string;
-    scope?: string;
-    error?: string;
-}
-
-// ─────────────── Comparison Report ───────────
-export type GapSeverity = 'blocker' | 'warning';
-export type GapCategory = 'permission' | 'role' | 'network_rule' | 'field_missing' | 'value_mismatch';
-
-export interface GapItem {
-    id: string;
-    category: GapCategory;
-    field: string;
-    prereqValue: string;
-    scanValue: string | null;
-    severity: GapSeverity;
-    description: string;
-    remediation: string;
-}
-
-export interface ComparisonReport {
-    id: string;
-    generatedAt: string;
-    provider: CloudProvider;
-    environment: string;
-    totalGaps: number;
-    blockerGaps: number;
-    warningGaps: number;
-    prereqFields: number;
-    matchedFields: number;
-    gaps: GapItem[];
-}
-
-// ─────────────── Audit Log ───────────────────
-export type AuditEventLevel = 'info' | 'warn' | 'error' | 'success';
-export interface AuditEvent {
-    id: string;
-    timestamp: string;
-    level: AuditEventLevel;
-    module: string;
-    action: string;
-    result: string;
-    durationMs?: number;
-    meta?: Record<string, unknown>;
-}
-
-// ─────────────── Dashboard ───────────────────
+// ─────────────── Dashboard (derived) ─────────
 export interface DashboardStats {
-    id: string;
     totalScans: number;
     totalExtractions: number;
-    totalValidations: number;
-    totalIssues: number;
+    totalReports: number;
+    totalFailures: number;
     deploymentsReady: number;
-    lastScanAt: string;
-    providerDistribution: Record<CloudProvider, number>;
-}
-
-// ─────────────── Upload Response ─────────────
-export interface UploadResponse {
-    jobId: string;
-    fileId: string;
-    filename: string;
-    size: number;
+    lastActivityAt?: string;
 }

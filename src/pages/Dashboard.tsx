@@ -1,53 +1,52 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
-    Box, Card, CardContent, Typography, Chip,
-    Divider, Button, Table, TableBody, TableCell,
-    TableContainer, TableHead, TableRow, LinearProgress, Breadcrumbs,
+    Box, Card, CardContent, Typography, Chip, Divider,
+    Button, Table, TableBody, TableCell, TableContainer, TableHead,
+    TableRow, Breadcrumbs,
 } from '@mui/material';
 import { Grid } from '@mui/material';
 import {
     TravelExploreOutlined, UploadFileOutlined, VerifiedOutlined,
-    CheckCircle, ErrorOutline, NavigateNext, TrendingUp,
+    CheckCircle, ErrorOutline, NavigateNext, TrendingUp, AssessmentOutlined,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import client from '../api/client';
-import type { DashboardStats, Scan } from '../api/types';
-import { formatDateTime } from '../lib/formatters';
 import PageShell from '../components/layout/PageShell';
-
-const PROVIDER_COLORS: Record<string, string> = {
-    aws: '#FF9900',
-    gcp: '#4285F4',
-    azure: '#0078D4',
-};
+import { useExtractionStore } from '../store/extractionStore';
+import { useScanStore } from '../store/scanStore';
+import { formatDateTime } from '../lib/formatters';
 
 const Dashboard: React.FC = () => {
     const navigate = useNavigate();
-    const [stats, setStats] = useState<DashboardStats | null>(null);
-    const [scans, setScans] = useState<Scan[]>([]);
+    const { phase: extractPhase, total: extractedTotal, filename } = useExtractionStore();
+    const { report } = useScanStore();
 
-    useEffect(() => {
-        client.get('/dashboard').then(({ data }) => setStats(data[0])).catch(() => {
-            setStats({
-                id: 'stats',
-                totalScans: 12,
-                totalExtractions: 34,
-                totalValidations: 28,
-                totalIssues: 19,
-                deploymentsReady: 22,
-                lastScanAt: new Date().toISOString(),
-                providerDistribution: { aws: 8, azure: 3, gcp: 1 },
-            });
-        });
-        client.get('/scans').then(({ data }) => setScans(data)).catch(() => setScans([]));
-    }, []);
+    // Derive stats from stores — no mock data needed
+    const hasExtraction = extractPhase === 'done';
+    const hasScan = !!report;
+    const isReady = report?.summary.deployment_ready ?? false;
 
-    const kpiCards = stats ? [
-        { title: 'Total Scans', value: stats.totalScans, icon: <TravelExploreOutlined />, color: '#2563EB', bg: '#EFF6FF', subtitle: 'Cloud environments scanned' },
-        { title: 'Extractions', value: stats.totalExtractions, icon: <UploadFileOutlined />, color: '#10B981', bg: '#ECFDF5', subtitle: 'Config files processed' },
-        { title: 'Validations', value: stats.totalValidations, icon: <VerifiedOutlined />, color: '#8B5CF6', bg: '#EDE9FE', subtitle: 'Templates validated' },
-        { title: 'Ready to Deploy', value: stats.deploymentsReady, icon: <CheckCircle />, color: '#059669', bg: '#D1FAE5', subtitle: `${stats.totalIssues} issues found` },
-    ] : [];
+    const kpiCards = [
+        {
+            title: 'Prerequisites', value: hasExtraction ? extractedTotal : '—',
+            icon: <UploadFileOutlined />, color: '#2563EB', bg: '#EFF6FF',
+            subtitle: hasExtraction ? `From "${filename ?? 'document'}"` : 'No document uploaded yet',
+        },
+        {
+            title: 'Checks Run', value: hasScan ? report!.summary.total : '—',
+            icon: <TravelExploreOutlined />, color: '#8B5CF6', bg: '#EDE9FE',
+            subtitle: hasScan ? `on ${report!.cloud_provider.toUpperCase()} ${report!.region}` : 'No scan run yet',
+        },
+        {
+            title: 'Passed', value: hasScan ? report!.summary.passed : '—',
+            icon: <VerifiedOutlined />, color: '#10B981', bg: '#ECFDF5',
+            subtitle: hasScan ? `${report!.summary.failed} failed` : 'Run a scan to see results',
+        },
+        {
+            title: 'Deployment', value: hasScan ? (isReady ? 'Ready' : 'Blocked') : '—',
+            icon: isReady ? <CheckCircle /> : <ErrorOutline />, color: isReady ? '#059669' : '#EF4444', bg: isReady ? '#D1FAE5' : '#FEE2E2',
+            subtitle: hasScan ? `${report!.summary.critical_failures} critical failures` : 'Pending scan',
+        },
+    ];
 
     return (
         <PageShell>
@@ -64,112 +63,131 @@ const Dashboard: React.FC = () => {
             </Box>
 
             {/* KPI cards */}
-            {stats && (
-                <Grid container spacing={3} sx={{ mb: 4 }}>
-                    {kpiCards.map((card) => (
-                        <Grid key={card.title} size={{ xs: 12, sm: 6, lg: 3 }}>
-                            <Card>
-                                <CardContent sx={{ p: 3 }}>
-                                    <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2 }}>
-                                        <Box sx={{ width: 44, height: 44, borderRadius: 2, bgcolor: card.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: card.color }}>
-                                            {card.icon}
-                                        </Box>
-                                        <Chip label="+12%" size="small" sx={{ bgcolor: '#F0FDF4', color: '#15803D', fontWeight: 600, fontSize: '0.6875rem' }} />
+            <Grid container spacing={3} sx={{ mb: 4 }}>
+                {kpiCards.map((card) => (
+                    <Grid key={card.title} size={{ xs: 12, sm: 6, lg: 3 }}>
+                        <Card>
+                            <CardContent sx={{ p: 3 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2 }}>
+                                    <Box sx={{ width: 44, height: 44, borderRadius: 2, bgcolor: card.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: card.color }}>
+                                        {card.icon}
                                     </Box>
-                                    <Typography variant="h2" sx={{ fontSize: '1.875rem', fontWeight: 700, mb: 0.25 }}>{card.value}</Typography>
-                                    <Typography variant="body2" fontWeight={600} color="text.primary">{card.title}</Typography>
-                                    <Typography variant="caption" color="text.secondary">{card.subtitle}</Typography>
-                                </CardContent>
-                            </Card>
-                        </Grid>
-                    ))}
-                </Grid>
-            )}
+                                </Box>
+                                <Typography variant="h2" sx={{ fontSize: '1.875rem', fontWeight: 700, mb: 0.25 }}>{card.value}</Typography>
+                                <Typography variant="body2" fontWeight={600} color="text.primary">{card.title}</Typography>
+                                <Typography variant="caption" color="text.secondary">{card.subtitle}</Typography>
+                            </CardContent>
+                        </Card>
+                    </Grid>
+                ))}
+            </Grid>
 
             <Grid container spacing={3}>
-                {/* Recent Scans */}
+                {/* Recent scan results */}
                 <Grid size={{ xs: 12, lg: 8 }}>
                     <Card>
                         <CardContent sx={{ p: 0 }}>
                             <Box sx={{ px: 3, py: 2.5, borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Typography variant="h5">Recent Scans</Typography>
-                                <Button size="small" onClick={() => navigate('/scan')} sx={{ color: 'primary.main', fontSize: '0.8125rem' }}>View all →</Button>
+                                <Typography variant="h5">Latest Scan Results</Typography>
+                                <Button size="small" onClick={() => navigate('/scan')} sx={{ color: 'primary.main', fontSize: '0.8125rem' }}>Go to scan →</Button>
                             </Box>
-                            <TableContainer>
-                                <Table>
-                                    <TableHead>
-                                        <TableRow>
-                                            <TableCell>Provider</TableCell>
-                                            <TableCell>Environment</TableCell>
-                                            <TableCell>Status</TableCell>
-                                            <TableCell>Resources</TableCell>
-                                            <TableCell>Issues</TableCell>
-                                            <TableCell>Date</TableCell>
-                                        </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                        {scans.length === 0 ? (
+                            {!hasScan ? (
+                                <Box sx={{ py: 6, textAlign: 'center', color: '#9CA3AF' }}>
+                                    <TravelExploreOutlined sx={{ fontSize: 40, mb: 1 }} />
+                                    <Typography>No scan results yet.</Typography>
+                                    <Button variant="outlined" sx={{ mt: 2 }} onClick={() => navigate('/scan')}>Start a Scan</Button>
+                                </Box>
+                            ) : (
+                                <TableContainer>
+                                    <Table>
+                                        <TableHead>
                                             <TableRow>
-                                                <TableCell colSpan={6} align="center" sx={{ py: 4, color: '#9CA3AF' }}>No scans yet. Start a new scan to see results.</TableCell>
+                                                <TableCell>Provider</TableCell>
+                                                <TableCell>Region</TableCell>
+                                                <TableCell>Status</TableCell>
+                                                <TableCell>Passed</TableCell>
+                                                <TableCell>Failed</TableCell>
+                                                <TableCell>Critical</TableCell>
+                                                <TableCell>Generated</TableCell>
                                             </TableRow>
-                                        ) : scans.map((scan) => (
-                                            <TableRow key={scan.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate('/scan')}>
-                                                <TableCell>
-                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: PROVIDER_COLORS[scan.provider] ?? '#999' }} />
-                                                        <Typography variant="body2" fontWeight={500} sx={{ textTransform: 'uppercase', fontSize: '0.75rem', color: PROVIDER_COLORS[scan.provider] }}>{scan.provider}</Typography>
-                                                    </Box>
-                                                </TableCell>
-                                                <TableCell><Typography variant="body2">{scan.environment}</Typography></TableCell>
+                                        </TableHead>
+                                        <TableBody>
+                                            <TableRow hover sx={{ cursor: 'pointer' }} onClick={() => navigate('/reports')}>
                                                 <TableCell>
                                                     <Chip
-                                                        icon={scan.status === 'completed' ? <CheckCircle sx={{ fontSize: 14 }} /> : <ErrorOutline sx={{ fontSize: 14 }} />}
-                                                        label={scan.status}
+                                                        label={report!.cloud_provider.toUpperCase()}
                                                         size="small"
-                                                        color={scan.status === 'completed' ? 'success' : scan.status === 'failed' ? 'error' : 'warning'}
+                                                        sx={{ color: '#0078D4', fontWeight: 700, fontSize: '0.6875rem', borderRadius: 1 }}
                                                         variant="outlined"
-                                                        sx={{ textTransform: 'capitalize', fontSize: '0.75rem', borderRadius: 99 }}
                                                     />
                                                 </TableCell>
-                                                <TableCell><Typography variant="body2">{scan.resourceCount}</Typography></TableCell>
+                                                <TableCell><Typography variant="body2">{report!.region}</Typography></TableCell>
                                                 <TableCell>
-                                                    <Typography variant="body2" color={scan.issueCount > 0 ? 'error.main' : 'success.main'} fontWeight={600}>{scan.issueCount}</Typography>
+                                                    <Chip
+                                                        icon={report!.summary.deployment_ready ? <CheckCircle sx={{ fontSize: '14px !important' }} /> : <ErrorOutline sx={{ fontSize: '14px !important' }} />}
+                                                        label={report!.summary.deployment_ready ? 'Ready' : 'Blocked'}
+                                                        size="small"
+                                                        color={report!.summary.deployment_ready ? 'success' : 'error'}
+                                                        variant="outlined"
+                                                        sx={{ borderRadius: 99, fontSize: '0.75rem' }}
+                                                    />
                                                 </TableCell>
-                                                <TableCell><Typography variant="caption" color="text.secondary">{formatDateTime(scan.startedAt)}</Typography></TableCell>
+                                                <TableCell>
+                                                    <Typography variant="body2" color="success.main" fontWeight={600}>{report!.summary.passed}</Typography>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Typography variant="body2" color={report!.summary.failed > 0 ? 'error.main' : 'success.main'} fontWeight={600}>
+                                                        {report!.summary.failed}
+                                                    </Typography>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Typography variant="body2" color={report!.summary.critical_failures > 0 ? 'error.main' : 'success.main'} fontWeight={700}>
+                                                        {report!.summary.critical_failures}
+                                                    </Typography>
+                                                </TableCell>
+                                                <TableCell><Typography variant="caption" color="text.secondary">{formatDateTime(report!.generated_at)}</Typography></TableCell>
                                             </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            </TableContainer>
+                                        </TableBody>
+                                    </Table>
+                                </TableContainer>
+                            )}
                         </CardContent>
                     </Card>
                 </Grid>
 
-                {/* Provider Distribution */}
+                {/* Quick workflow guide */}
                 <Grid size={{ xs: 12, lg: 4 }}>
                     <Card sx={{ height: '100%' }}>
                         <CardContent sx={{ p: 3 }}>
-                            <Typography variant="h5" gutterBottom>Provider Distribution</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Breakdown of scans by cloud provider</Typography>
-                            {stats && Object.entries(stats.providerDistribution).map(([provider, count]) => {
-                                const total = Object.values(stats.providerDistribution).reduce((a, b) => a + b, 0);
-                                const pct = Math.round((count / total) * 100);
-                                const color = PROVIDER_COLORS[provider] ?? '#999';
-                                return (
-                                    <Box key={provider} sx={{ mb: 2 }}>
-                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: color }} />
-                                                <Typography variant="body2" fontWeight={500} sx={{ textTransform: 'uppercase', fontSize: '0.75rem', color }}>{provider}</Typography>
-                                            </Box>
-                                            <Typography variant="body2" fontWeight={600}>{count} <Typography component="span" variant="caption" color="text.secondary">({pct}%)</Typography></Typography>
-                                        </Box>
-                                        <LinearProgress variant="determinate" value={pct} sx={{ height: 6, borderRadius: 99, bgcolor: '#F3F4F6', '& .MuiLinearProgress-bar': { bgcolor: color, backgroundImage: 'none' } }} />
+                            <Typography variant="h5" gutterBottom>Workflow</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Complete these steps to validate your Azure environment:</Typography>
+                            {[
+                                { step: 1, label: 'Upload Document', done: hasExtraction, path: '/extract', desc: 'Upload prerequisites PDF/DOCX' },
+                                { step: 2, label: 'Run Azure Scan', done: hasScan, path: '/scan', desc: 'Scan live Azure resources' },
+                                { step: 3, label: 'View Report', done: hasScan && isReady, path: '/reports', desc: 'Review validation findings' },
+                            ].map((item) => (
+                                <Box key={item.step} sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+                                    <Box sx={{
+                                        width: 28, height: 28, borderRadius: '50%', flexShrink: 0, mt: 0.25,
+                                        bgcolor: item.done ? '#D1FAE5' : '#F3F4F6',
+                                        color: item.done ? '#059669' : '#9CA3AF',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        fontSize: '0.75rem', fontWeight: 700,
+                                    }}>
+                                        {item.done ? <CheckCircle sx={{ fontSize: 16 }} /> : item.step}
                                     </Box>
-                                );
-                            })}
+                                    <Box sx={{ flex: 1 }}>
+                                        <Typography variant="body2" fontWeight={600} sx={{ cursor: 'pointer', '&:hover': { color: 'primary.main' } }} onClick={() => navigate(item.path)}>
+                                            {item.label}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">{item.desc}</Typography>
+                                    </Box>
+                                </Box>
+                            ))}
                             <Divider sx={{ my: 2 }} />
-                            <Button variant="outlined" fullWidth size="medium" onClick={() => navigate('/scan')} sx={{ borderColor: '#D1D5DB', color: 'text.primary' }}>Start New Scan</Button>
+                            <Button variant="outlined" fullWidth size="medium" onClick={() => navigate('/extract')} sx={{ borderColor: '#D1D5DB', color: 'text.primary' }}>
+                                {hasExtraction ? 'Upload Another Document' : 'Start Now'}
+                            </Button>
                         </CardContent>
                     </Card>
                 </Grid>
@@ -180,9 +198,9 @@ const Dashboard: React.FC = () => {
                 <Typography variant="h5" gutterBottom>Quick Actions</Typography>
                 <Grid container spacing={2}>
                     {[
-                        { label: 'Upload & Extract', desc: 'Analyze a new config file', icon: <UploadFileOutlined />, color: '#2563EB', bg: '#EFF6FF', path: '/extract' },
-                        { label: 'Run Scan', desc: 'Scan a cloud environment', icon: <TravelExploreOutlined />, color: '#8B5CF6', bg: '#EDE9FE', path: '/scan' },
-                        { label: 'View Reports', desc: 'Review past analysis reports', icon: <VerifiedOutlined />, color: '#059669', bg: '#D1FAE5', path: '/reports' },
+                        { label: 'Upload & Extract', desc: 'Analyze a prerequisites document', icon: <UploadFileOutlined />, color: '#2563EB', bg: '#EFF6FF', path: '/extract' },
+                        { label: 'Run Azure Scan', desc: 'Scan live Azure environment', icon: <TravelExploreOutlined />, color: '#8B5CF6', bg: '#EDE9FE', path: '/scan' },
+                        { label: 'View Reports', desc: 'Review validation findings', icon: <AssessmentOutlined />, color: '#059669', bg: '#D1FAE5', path: '/reports' },
                     ].map((action) => (
                         <Grid key={action.label} size={{ xs: 12, sm: 4 }}>
                             <Card sx={{ cursor: 'pointer', transition: 'box-shadow 150ms', '&:hover': { boxShadow: '0 4px 20px rgba(0,0,0,0.1)' } }} onClick={() => navigate(action.path)}>

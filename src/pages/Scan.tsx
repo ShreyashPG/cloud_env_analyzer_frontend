@@ -1,247 +1,243 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     Box, Card, CardContent, Typography, Button, TextField,
-    Select, MenuItem, FormControl, InputLabel, Stepper, Step, StepLabel,
-    LinearProgress, Chip, Table, TableBody, TableCell, TableContainer,
-    TableHead, TableRow, Breadcrumbs, Divider, Alert, Collapse,
-    IconButton, Tooltip,
+    FormControl, InputLabel, Select, MenuItem, LinearProgress,
+    Stepper, Step, StepLabel, Chip, Alert, Breadcrumbs, Divider,
+    Collapse, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
 } from '@mui/material';
 import { Grid } from '@mui/material';
 import {
     NavigateNext, PlayArrow, CheckCircle, ErrorOutline, Cancel,
-    ExpandMore, ExpandLess, Warning,
+    ExpandMore, ExpandLess, AssessmentOutlined,
 } from '@mui/icons-material';
-import { useScanStore } from '../store/scanStore';
-import { getScans, startScan } from '../api/scan';
-import { formatDateTime } from '../lib/formatters';
-import { CLOUD_PROVIDERS } from '../lib/constants';
-import { sleep } from '../lib/utils';
 import { useSnackbar } from 'notistack';
+import { useLocation, useNavigate } from 'react-router-dom';
 import PageShell from '../components/layout/PageShell';
+import { startScan, getReport } from '../api/scan';
+import { pollJobUntilDone } from '../api/jobs';
+import { useScanStore } from '../store/scanStore';
+import { useExtractionStore } from '../store/extractionStore';
+import type { Finding } from '../api/types';
 
-const SCAN_STEPS = [
-    { label: 'Authenticating', domain: 'identity' },
-    { label: 'Discovering Resources', domain: 'resources' },
-    { label: 'Analyzing IAM/RBAC', domain: 'identity' },
-    { label: 'Checking Network', domain: 'network' },
-    { label: 'Validating Services', domain: 'services' },
-    { label: 'Checking Policies', domain: 'policy' },
-    { label: 'Generating Report', domain: 'general' },
-];
-
-const DOMAIN_COLORS: Record<string, string> = {
-    identity: '#8B5CF6', network: '#2563EB', resources: '#10B981',
-    services: '#F59E0B', policy: '#EF4444', general: '#6B7280',
+const SEVERITY_COLOR: Record<string, string> = {
+    critical: '#EF4444', high: '#F59E0B', medium: '#2563EB', low: '#10B981',
 };
 
+const STATUS_CONFIG = {
+    pass: { color: '#10B981', bg: '#ECFDF5', label: 'PASS' },
+    fail: { color: '#EF4444', bg: '#FEF2F2', label: 'FAIL' },
+    error: { color: '#F59E0B', bg: '#FFFBEB', label: 'ERROR' },
+    skipped: { color: '#6B7280', bg: '#F3F4F6', label: 'SKIP' },
+};
+
+const SCAN_STEPS = [
+    'Loading prerequisites',
+    'Scanning compute resources',
+    'Scanning networking',
+    'Scanning databases',
+    'Scanning security',
+    'Running validation',
+    'Building report',
+];
+
 const Scan: React.FC = () => {
-    const { scans, setScans, isScanning, setIsScanning, scanProgress, setScanProgress, currentStep, setCurrentStep } = useScanStore();
+    const {
+        setScanJobId, documentId: storedDocId, setDocumentId,
+        isScanning, setIsScanning, scanProgress, setScanProgress,
+        currentStep, report, setReport, setReportId, setError, error, reset,
+    } = useScanStore();
+    const { documentId: extractionDocId } = useExtractionStore();
     const { enqueueSnackbar } = useSnackbar();
+    const navigate = useNavigate();
+    const location = useLocation();
 
-    const [provider, setProvider] = useState('azure');
-    const [environment, setEnvironment] = useState('production');
-    const [scope, setScope] = useState('');
-    const [credentials, setCredentials] = useState<Record<string, string>>({});
     const [activeStep, setActiveStep] = useState(0);
-    const [eta, setEta] = useState<number | null>(null);
+    const [resourceGroup, setResourceGroup] = useState('');
+    const [region, setRegion] = useState('eastus');
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const [partialSections, setPartialSections] = useState<string[]>([]);
     const cancelRef = useRef(false);
-    const startTimeRef = useRef<number>(0);
 
-    useEffect(() => { getScans().then(setScans).catch(() => { }); }, []);
+    // Allow document_id to come from nav state (from Extraction page) or extraction store
+    const documentId = (location.state as any)?.documentId ?? extractionDocId ?? storedDocId ?? '';
+
+    useEffect(() => {
+        if (documentId) setDocumentId(documentId);
+    }, [documentId]);
 
     const handleStartScan = async () => {
-        if (!provider) { enqueueSnackbar('Please select a cloud provider.', { variant: 'warning' }); return; }
+        if (!documentId) {
+            enqueueSnackbar('Please upload and extract a document first.', { variant: 'warning' });
+            return;
+        }
         cancelRef.current = false;
-        setIsScanning(true); setScanProgress(0); setActiveStep(0);
-        setPartialSections([]); setEta(null);
-        startTimeRef.current = Date.now();
+        setIsScanning(true);
+        setScanProgress(0, 'Starting scan…');
+        setActiveStep(0);
+        setError(null);
+        setReport(null);
 
         try {
-            for (let i = 0; i < SCAN_STEPS.length; i++) {
-                if (cancelRef.current) break;
-                setCurrentStep(SCAN_STEPS[i].label); setActiveStep(i);
+            const res = await startScan({
+                document_id: documentId,
+                resource_group: resourceGroup || null,
+                region,
+            });
 
-                const stepsTotal = SCAN_STEPS.length;
-                const startPct = (i / stepsTotal) * 100;
-                const endPct = ((i + 1) / stepsTotal) * 100;
+            setScanJobId(res.job_id);
 
-                for (let pct = startPct; pct < endPct; pct += 3) {
-                    if (cancelRef.current) break;
-                    await sleep(120);
-                    const rounded = Math.min(Math.round(pct), 99);
-                    setScanProgress(rounded);
-                    // Update ETA
-                    const elapsed = (Date.now() - startTimeRef.current) / 1000;
-                    if (rounded > 5) setEta(Math.max(0, Math.round((100 - rounded) * (elapsed / rounded))));
-                }
+            const finalJob = await pollJobUntilDone(
+                res.job_id,
+                (job) => {
+                    setScanProgress(job.progress_pct, job.current_step);
+                    // Map progress % to stepper step
+                    const step = Math.min(
+                        Math.floor((job.progress_pct / 100) * SCAN_STEPS.length),
+                        SCAN_STEPS.length - 1
+                    );
+                    setActiveStep(step);
+                },
+                3000
+            );
 
-                // Simulate occasional partial-result warning (step 2 = network sometimes limited)
-                if (i === 3 && Math.random() < 0.4) {
-                    setPartialSections((prev) => [...prev, 'Network']);
-                }
-            }
-
-            if (!cancelRef.current) {
-                setScanProgress(100); setCurrentStep('Complete'); setEta(0);
-                const scan = await startScan({ provider, environment, credentials });
-                setScans([{ ...scan, status: 'completed', resourceCount: 147, issueCount: 3, scope }, ...scans]);
-                enqueueSnackbar('Scan completed successfully!', { variant: 'success' });
+            if (finalJob.result_id) {
+                const reportData = await getReport(finalJob.result_id);
+                setReport(reportData);
+                setReportId(finalJob.result_id);
+                enqueueSnackbar(
+                    reportData.summary.deployment_ready
+                        ? '✅ Scan complete — environment is deployment ready!'
+                        : `⚠ Scan complete — ${reportData.summary.failed} issues found.`,
+                    { variant: reportData.summary.deployment_ready ? 'success' : 'warning', autoHideDuration: 6000 }
+                );
             } else {
-                enqueueSnackbar('Scan cancelled.', { variant: 'warning' });
+                enqueueSnackbar('Scan completed but no report was generated.', { variant: 'warning' });
             }
-        } catch {
-            enqueueSnackbar('Scan failed. Please check credentials.', { variant: 'error' });
+        } catch (err: any) {
+            if (!cancelRef.current) {
+                setError(err.message ?? 'Scan failed');
+                enqueueSnackbar(err.message ?? 'Scan failed', { variant: 'error' });
+            }
         } finally {
             setIsScanning(false);
         }
     };
 
-    const handleCancel = () => { cancelRef.current = true; };
+    const handleCancel = () => { cancelRef.current = true; setIsScanning(false); };
 
-    const credentialFields: Record<string, Array<{ key: string; label: string; type?: string }>> = {
-        aws: [
-            { key: 'accessKeyId', label: 'Access Key ID' },
-            { key: 'secretAccessKey', label: 'Secret Access Key', type: 'password' },
-            { key: 'sessionToken', label: 'Session Token (optional)' },
-        ],
-        gcp: [
-            { key: 'projectId', label: 'Project ID' },
-            { key: 'serviceAccountKey', label: 'Service Account JSON Key', type: 'password' },
-        ],
-        azure: [
-            { key: 'subscriptionId', label: 'Subscription ID' },
-            { key: 'tenantId', label: 'Tenant ID' },
-            { key: 'clientId', label: 'Client ID' },
-            { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-        ],
-    };
+    const REGIONS = ['eastus', 'eastus2', 'westus', 'westus2', 'westeurope', 'northeurope', 'southeastasia', 'australiaeast', 'japaneast', 'centralus'];
 
     return (
         <PageShell>
             <Breadcrumbs separator={<NavigateNext fontSize="small" sx={{ color: '#9CA3AF' }} />} sx={{ mb: 1 }}>
-                <Typography component="a" href="/" sx={{ fontSize: '0.8125rem', color: 'text.secondary', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}>Dashboard</Typography>
+                <Typography component="a" href="/" sx={{ fontSize: '0.8125rem', color: 'text.secondary', textDecoration: 'none' }}>Dashboard</Typography>
                 <Typography sx={{ fontSize: '0.8125rem', color: 'text.primary', fontWeight: 500 }}>Scan</Typography>
             </Breadcrumbs>
 
             <Box sx={{ mb: 4 }}>
-                <Typography variant="h1" sx={{ fontSize: { xs: '1.375rem', md: '1.75rem' }, fontWeight: 600, mb: 0.5 }}>Cloud Environment Scan</Typography>
-                <Typography variant="body2" color="text.secondary">Connect to your cloud provider and run a live environment readiness scan against AI Assist prerequisites.</Typography>
+                <Typography variant="h1" sx={{ fontSize: { xs: '1.375rem', md: '1.75rem' }, fontWeight: 600, mb: 0.5 }}>
+                    Azure Environment Scan
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                    Scan your Azure subscription to validate all extracted prerequisites against live resources.
+                </Typography>
             </Box>
 
             <Grid container spacing={3}>
-                {/* Credential Form */}
+                {/* Configuration */}
                 <Grid size={{ xs: 12, lg: 5 }}>
                     <Card>
                         <CardContent sx={{ p: 3.5 }}>
                             <Typography variant="h5" gutterBottom>Scan Configuration</Typography>
                             <Divider sx={{ mb: 3 }} />
+
                             <Alert severity="info" sx={{ mb: 3, fontSize: '0.8125rem', borderRadius: 1.5 }}>
-                                Only <strong>read-only</strong> credentials are required. No write or modify permissions needed.
+                                Azure credentials are read from the <strong>.env</strong> file on the backend server.
+                                Only <strong>read-only</strong> permissions are required.
                             </Alert>
 
-                            <FormControl fullWidth sx={{ mb: 2.5 }}>
-                                <InputLabel>Cloud Provider</InputLabel>
-                                <Select value={provider} label="Cloud Provider" onChange={(e) => { setProvider(e.target.value); setCredentials({}); }}>
-                                    {CLOUD_PROVIDERS.map((p) => (
-                                        <MenuItem key={p.id} value={p.id}>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: p.color }} />{p.label}
-                                            </Box>
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
+                            {documentId ? (
+                                <Alert severity="success" sx={{ mb: 2, fontSize: '0.8125rem' }}>
+                                    Document ID: <strong>{documentId.slice(0, 8)}…</strong> — prerequisites loaded.
+                                </Alert>
+                            ) : (
+                                <Alert severity="warning" sx={{ mb: 2, fontSize: '0.8125rem' }}>
+                                    No document selected.{' '}
+                                    <Typography
+                                        component="span"
+                                        sx={{ cursor: 'pointer', textDecoration: 'underline', fontSize: '0.8125rem', color: 'warning.dark' }}
+                                        onClick={() => navigate('/extract')}
+                                    >
+                                        Upload a document first →
+                                    </Typography>
+                                </Alert>
+                            )}
 
-                            <FormControl fullWidth sx={{ mb: 2.5 }}>
-                                <InputLabel>Environment</InputLabel>
-                                <Select value={environment} label="Environment" onChange={(e) => setEnvironment(e.target.value)}>
-                                    {['production', 'staging', 'development', 'testing'].map((e) => (
-                                        <MenuItem key={e} value={e} sx={{ textTransform: 'capitalize' }}>{e}</MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-
-                            {(credentialFields[provider] ?? []).map((field) => (
-                                <TextField key={field.key} fullWidth label={field.label} type={field.type ?? 'text'}
-                                    placeholder={field.type === 'password' ? '••••••••••••' : ''}
-                                    value={credentials[field.key] ?? ''}
-                                    onChange={(e) => setCredentials((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                                    sx={{ mb: 2 }} />
-                            ))}
-
-                            {/* Advanced scope options */}
+                            {/* Advanced scope */}
                             <Box sx={{ mb: 2 }}>
-                                <Button size="small" onClick={() => setShowAdvanced(!showAdvanced)}
+                                <Button
+                                    size="small"
+                                    onClick={() => setShowAdvanced(!showAdvanced)}
                                     endIcon={showAdvanced ? <ExpandLess sx={{ fontSize: 14 }} /> : <ExpandMore sx={{ fontSize: 14 }} />}
-                                    sx={{ color: 'text.secondary', fontSize: '0.8125rem', pl: 0 }}>
+                                    sx={{ color: 'text.secondary', fontSize: '0.8125rem', pl: 0 }}
+                                >
                                     Advanced Scope Options
                                 </Button>
                                 <Collapse in={showAdvanced}>
-                                    <Box sx={{ pt: 1.5, pb: 0.5 }}>
-                                        <TextField fullWidth size="small" label={provider === 'aws' ? 'Resources Region (e.g. us-east-1)' : provider === 'azure' ? 'Resource Group (optional)' : 'Region / Zone (optional)'}
-                                            value={scope} onChange={(e) => setScope(e.target.value)} sx={{ mb: 2 }}
-                                            helperText="Leave blank to scan the full subscription/account" />
+                                    <Box sx={{ pt: 1.5 }}>
+                                        <TextField
+                                            fullWidth size="small" label="Resource Group (optional)"
+                                            value={resourceGroup} onChange={(e) => setResourceGroup(e.target.value)}
+                                            sx={{ mb: 2 }}
+                                            helperText="Leave blank to scan entire subscription"
+                                        />
+                                        <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                                            <InputLabel>Azure Region</InputLabel>
+                                            <Select value={region} label="Azure Region" onChange={(e) => setRegion(e.target.value)}>
+                                                {REGIONS.map((r) => (
+                                                    <MenuItem key={r} value={r}>{r}</MenuItem>
+                                                ))}
+                                            </Select>
+                                        </FormControl>
                                     </Box>
                                 </Collapse>
                             </Box>
 
-                            <Button variant="contained" size="large" fullWidth onClick={handleStartScan} disabled={isScanning} startIcon={<PlayArrow />} sx={{ mt: 1 }}>
-                                {isScanning ? 'Scanning…' : 'Start Scan'}
-                            </Button>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Button
+                                    variant="contained"
+                                    size="large"
+                                    fullWidth
+                                    onClick={handleStartScan}
+                                    disabled={isScanning || !documentId}
+                                    startIcon={<PlayArrow />}
+                                >
+                                    {isScanning ? 'Scanning…' : 'Start Scan'}
+                                </Button>
+                                {isScanning && (
+                                    <Button variant="outlined" color="error" size="large" onClick={handleCancel} startIcon={<Cancel />}>
+                                        Cancel
+                                    </Button>
+                                )}
+                            </Box>
                         </CardContent>
                     </Card>
                 </Grid>
 
-                {/* Progress + history */}
+                {/* Progress & Results */}
                 <Grid size={{ xs: 12, lg: 7 }}>
                     {isScanning && (
                         <Card sx={{ mb: 3 }}>
                             <CardContent sx={{ p: 3.5 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-                                    <Typography variant="h5">Scan Progress</Typography>
-                                    <Tooltip title="Cancel scan">
-                                        <Button size="small" variant="outlined" color="error" startIcon={<Cancel sx={{ fontSize: 14 }} />} onClick={handleCancel} sx={{ fontSize: '0.8125rem' }}>
-                                            Cancel
-                                        </Button>
-                                    </Tooltip>
+                                <Typography variant="h5" gutterBottom>Scan Progress</Typography>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
+                                    <Typography variant="body2" color="text.secondary">{currentStep || 'Starting…'}</Typography>
+                                    <Typography variant="body2" fontWeight={700} color="primary.main">{scanProgress}%</Typography>
                                 </Box>
-
-                                <Box sx={{ mb: 3 }}>
-                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: DOMAIN_COLORS[SCAN_STEPS[activeStep]?.domain ?? 'general'], animation: 'pulseRing 1.5s infinite' }} />
-                                            <Typography variant="body2" color="text.secondary">{currentStep}</Typography>
-                                        </Box>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                            {eta !== null && eta > 0 && (
-                                                <Typography variant="caption" color="text.secondary">~{eta}s remaining</Typography>
-                                            )}
-                                            <Typography variant="body2" color="primary.main" fontWeight={700}>{scanProgress}%</Typography>
-                                        </Box>
-                                    </Box>
-                                    <LinearProgress variant="determinate" value={scanProgress} sx={{ height: 8, borderRadius: 99, '& .MuiLinearProgress-bar': { borderRadius: 99, bgcolor: DOMAIN_COLORS[SCAN_STEPS[activeStep]?.domain ?? 'general'] } }} />
-                                </Box>
-
-                                {/* Partial results warning */}
-                                {partialSections.length > 0 && (
-                                    <Alert severity="warning" icon={<Warning sx={{ fontSize: 16 }} />} sx={{ mb: 2, fontSize: '0.8125rem', py: 0.5 }}>
-                                        Partial results: <strong>{partialSections.join(', ')}</strong> section{partialSections.length > 1 ? 's' : ''} may have incomplete data due to API restrictions.
-                                    </Alert>
-                                )}
-
-                                <Stepper alternativeLabel activeStep={activeStep} sx={{ mt: 1 }}>
+                                <LinearProgress variant="determinate" value={scanProgress} sx={{ height: 8, borderRadius: 99, mb: 3, '& .MuiLinearProgress-bar': { borderRadius: 99 } }} />
+                                <Stepper alternativeLabel activeStep={activeStep}>
                                     {SCAN_STEPS.map((step, i) => (
-                                        <Step key={step.label} completed={i < activeStep}>
-                                            <StepLabel
-                                                sx={{
-                                                    '& .MuiStepIcon-root.Mui-active': { color: DOMAIN_COLORS[step.domain] },
-                                                    '& .MuiStepLabel-label': { fontSize: '0.625rem' },
-                                                }}
-                                            >
-                                                {step.label}
-                                            </StepLabel>
+                                        <Step key={step} completed={i < activeStep}>
+                                            <StepLabel sx={{ '& .MuiStepLabel-label': { fontSize: '0.625rem' } }}>{step}</StepLabel>
                                         </Step>
                                     ))}
                                 </Stepper>
@@ -249,53 +245,118 @@ const Scan: React.FC = () => {
                         </Card>
                     )}
 
-                    <Card>
-                        <CardContent sx={{ p: 0 }}>
-                            <Box sx={{ px: 3, py: 2.5, borderBottom: '1px solid #F3F4F6' }}>
-                                <Typography variant="h5">Scan History</Typography>
-                            </Box>
-                            <TableContainer>
-                                <Table>
-                                    <TableHead>
-                                        <TableRow>
-                                            <TableCell>Provider</TableCell>
-                                            <TableCell>Environment</TableCell>
-                                            <TableCell>Scope</TableCell>
-                                            <TableCell>Status</TableCell>
-                                            <TableCell>Resources</TableCell>
-                                            <TableCell>Issues</TableCell>
-                                            <TableCell>Date</TableCell>
-                                        </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                        {scans.map((scan) => (
-                                            <TableRow key={scan.id} hover>
-                                                <TableCell>
-                                                    <Chip label={scan.provider.toUpperCase()} size="small"
-                                                        sx={{ color: CLOUD_PROVIDERS.find(p => p.id === scan.provider)?.color ?? '#666', fontWeight: 700, fontSize: '0.6875rem', borderRadius: 1 }}
-                                                        variant="outlined" />
-                                                </TableCell>
-                                                <TableCell><Typography variant="body2" sx={{ textTransform: 'capitalize' }}>{scan.environment}</Typography></TableCell>
-                                                <TableCell><Typography variant="caption" color="text.secondary">{(scan as any).scope ?? '—'}</Typography></TableCell>
-                                                <TableCell>
-                                                    <Chip icon={scan.status === 'completed' ? <CheckCircle sx={{ fontSize: '14px !important' }} /> : <ErrorOutline sx={{ fontSize: '14px !important' }} />}
-                                                        label={scan.status} size="small"
-                                                        color={scan.status === 'completed' ? 'success' : 'error'}
-                                                        variant="outlined" sx={{ borderRadius: 99, fontSize: '0.75rem', textTransform: 'capitalize' }} />
-                                                </TableCell>
-                                                <TableCell><Typography variant="body2">{scan.resourceCount}</Typography></TableCell>
-                                                <TableCell><Typography variant="body2" color={scan.issueCount > 0 ? 'error.main' : 'success.main'} fontWeight={600}>{scan.issueCount}</Typography></TableCell>
-                                                <TableCell><Typography variant="caption" color="text.secondary">{formatDateTime(scan.startedAt)}</Typography></TableCell>
+                    {error && !isScanning && (
+                        <Alert severity="error" sx={{ mb: 2 }}>
+                            <strong>Scan failed:</strong> {error}
+                        </Alert>
+                    )}
+
+                    {report && !isScanning && (
+                        <Card>
+                            <CardContent sx={{ p: 3.5 }}>
+                                {/* Deployment readiness banner */}
+                                <Alert
+                                    severity={report.summary.deployment_ready ? 'success' : 'error'}
+                                    icon={report.summary.deployment_ready ? <CheckCircle /> : <ErrorOutline />}
+                                    sx={{ mb: 3, fontWeight: 500, borderLeft: `4px solid ${report.summary.deployment_ready ? '#10B981' : '#EF4444'}` }}
+                                >
+                                    {report.summary.deployment_ready
+                                        ? 'Deployment Ready — All critical prerequisites satisfied.'
+                                        : `Not Ready — ${report.summary.critical_failures} critical and ${report.summary.high_failures} high failures.`}
+                                </Alert>
+
+                                {/* KPI row */}
+                                <Grid container spacing={2} sx={{ mb: 3 }}>
+                                    {[
+                                        { label: 'Passed', value: report.summary.passed, color: '#10B981', bg: '#ECFDF5' },
+                                        { label: 'Failed', value: report.summary.failed, color: '#EF4444', bg: '#FEF2F2' },
+                                        { label: 'Errors', value: report.summary.errors, color: '#F59E0B', bg: '#FFFBEB' },
+                                        { label: 'Skipped', value: report.summary.skipped, color: '#6B7280', bg: '#F3F4F6' },
+                                    ].map((item) => (
+                                        <Grid key={item.label} size={{ xs: 6, sm: 3 }}>
+                                            <Box sx={{ p: 2, bgcolor: item.bg, borderRadius: 2, textAlign: 'center' }}>
+                                                <Typography variant="h4" sx={{ fontSize: '1.75rem', fontWeight: 700, color: item.color }}>{item.value}</Typography>
+                                                <Typography variant="caption" fontWeight={600} color="text.secondary">{item.label}</Typography>
+                                            </Box>
+                                        </Grid>
+                                    ))}
+                                </Grid>
+
+                                {/* Findings table — first 20 failures */}
+                                <Typography variant="h6" gutterBottom>Failures</Typography>
+                                <TableContainer>
+                                    <Table size="small">
+                                        <TableHead>
+                                            <TableRow>
+                                                <TableCell>Status</TableCell>
+                                                <TableCell>Severity</TableCell>
+                                                <TableCell>Attribute</TableCell>
+                                                <TableCell>Resource</TableCell>
+                                                <TableCell>Reason</TableCell>
                                             </TableRow>
-                                        ))}
-                                        {scans.length === 0 && (
-                                            <TableRow><TableCell colSpan={7} align="center" sx={{ py: 5, color: '#9CA3AF' }}>No scans yet.</TableCell></TableRow>
-                                        )}
-                                    </TableBody>
-                                </Table>
-                            </TableContainer>
-                        </CardContent>
-                    </Card>
+                                        </TableHead>
+                                        <TableBody>
+                                            {(report.findings_by_status.fail ?? []).slice(0, 20).map((f: Finding) => {
+                                                const sc = STATUS_CONFIG[f.status] ?? STATUS_CONFIG.fail;
+                                                const svColor = SEVERITY_COLOR[f.severity] ?? '#6B7280';
+                                                return (
+                                                    <TableRow key={f.id} hover>
+                                                        <TableCell>
+                                                            <Chip label={sc.label} size="small" sx={{ bgcolor: sc.bg, color: sc.color, fontWeight: 700, fontSize: '0.6875rem', borderRadius: 1 }} />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Chip label={f.severity} size="small" sx={{ bgcolor: SEVERITY_COLOR[f.severity] + '20', color: svColor, fontWeight: 600, fontSize: '0.6875rem', borderRadius: 1 }} />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{f.condition.attribute}</Typography>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Typography variant="caption" color="text.secondary">{f.resource_name ?? '—'}</Typography>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Typography variant="caption" color="text.secondary">{f.reason}</Typography>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                            {(report.findings_by_status.fail ?? []).length === 0 && (
+                                                <TableRow>
+                                                    <TableCell colSpan={5} align="center" sx={{ py: 3, color: '#10B981' }}>
+                                                        <CheckCircle sx={{ mr: 1, verticalAlign: 'middle' }} /> No failures!
+                                                    </TableCell>
+                                                </TableRow>
+                                            )}
+                                        </TableBody>
+                                    </Table>
+                                </TableContainer>
+
+                                <Box sx={{ mt: 3, display: 'flex', gap: 1 }}>
+                                    <Button
+                                        variant="contained"
+                                        startIcon={<AssessmentOutlined />}
+                                        onClick={() => navigate('/reports', { state: { reportId: report.report_id } })}
+                                    >
+                                        View Full Report
+                                    </Button>
+                                    <Button variant="outlined" onClick={reset} sx={{ borderColor: '#D1D5DB', color: 'text.secondary' }}>
+                                        New Scan
+                                    </Button>
+                                </Box>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {!isScanning && !report && !error && (
+                        <Card>
+                            <CardContent sx={{ py: 8, textAlign: 'center', color: '#9CA3AF' }}>
+                                <AssessmentOutlined sx={{ fontSize: 48, mb: 2 }} />
+                                <Typography variant="h6" color="text.secondary">Configure scan options and click <strong>Start Scan</strong></Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                    Azure credentials are loaded from the server's .env file.
+                                </Typography>
+                            </CardContent>
+                        </Card>
+                    )}
                 </Grid>
             </Grid>
         </PageShell>

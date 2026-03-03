@@ -5,10 +5,21 @@ import {
     Select, MenuItem, FormControl, InputLabel,
 } from '@mui/material';
 import { CheckCircle, ErrorOutline, InfoOutlined, WarningAmber } from '@mui/icons-material';
-import { formatDateTime } from '../../lib/formatters';
-import type { AuditEvent, AuditEventLevel } from '../../api/types';
 import { API_BASE_URL } from '../../lib/constants';
 import axios from 'axios';
+
+// Local types — not part of the main backend API contract
+type AuditEventLevel = 'info' | 'warn' | 'error' | 'success';
+interface AuditEvent {
+    id: string;
+    level: AuditEventLevel;
+    module: string;
+    action: string;
+    result: string;
+    timestamp: string;
+    durationMs?: number;
+}
+
 
 const LEVEL_CONFIG: Record<AuditEventLevel, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
     info: { color: '#2563EB', bg: '#EFF6FF', label: 'INFO', icon: <InfoOutlined sx={{ fontSize: 14 }} /> },

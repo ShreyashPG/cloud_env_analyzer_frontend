@@ -15,7 +15,20 @@ import PageShell from '../components/layout/PageShell';
 import { useExtractionStore } from '../store/extractionStore';
 import { useScanStore } from '../store/scanStore';
 import { GAP_CATEGORIES } from '../lib/constants';
-import type { GapItem, GapCategory, GapSeverity } from '../api/types';
+
+// Local gap types for the comparison UI (not from backend)
+type GapSeverity = 'blocker' | 'warning';
+type GapCategory = 'permission' | 'role' | 'network_rule' | 'field_missing' | 'value_mismatch';
+interface GapItem {
+    id: string;
+    category: GapCategory;
+    field: string;
+    prereqValue: string;
+    scanValue: string | null;
+    severity: GapSeverity;
+    description: string;
+    remediation: string;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -246,8 +259,8 @@ const COMPARISON_STEPS = [
 
 // ── MAIN COMPARISON PAGE ─────────────────────────────────────────────────
 const Comparison: React.FC = () => {
-    const { prereqExtraction } = useExtractionStore();
-    const { scanResult, scans } = useScanStore();
+    const { approved, filename } = useExtractionStore();
+    const { report } = useScanStore();
     const [compState, setCompState] = useState<ComparisonState>('idle');
     const [runProgress, setRunProgress] = useState(0);
     const [runStep, setRunStep] = useState(0);
@@ -255,15 +268,32 @@ const Comparison: React.FC = () => {
     const [catFilter, setCatFilter] = useState<GapCategory | 'all'>('all');
     const [sevFilter, setSevFilter] = useState<GapSeverity | 'all'>('all');
 
+    // Build prereq data from approved prerequisites
     const prereqData = useMemo(() => {
-        if (prereqExtraction?.data) return prereqExtraction.data as Record<string, unknown>;
+        if (approved.length > 0) {
+            return approved.reduce<Record<string, unknown>>((acc, p) => {
+                p.conditions.forEach((c) => { acc[c.attribute] = c.expected_value; });
+                return acc;
+            }, {});
+        }
         return MOCK_SCAN_DATA;
-    }, [prereqExtraction]);
+    }, [approved]);
 
-    const scanData = useMemo(() => scanResult?.data ?? MOCK_SCAN_DATA, [scanResult]);
-    const scanPermissions = scanResult?.permissions ?? MOCK_SCAN_PERMISSIONS;
-    const scanRoles = scanResult?.roles ?? MOCK_SCAN_ROLES;
-    const scanNetworkRules = scanResult?.networkRules ?? (MOCK_SCAN_NETWORK_RULES as typeof MOCK_SCAN_NETWORK_RULES);
+    // Build scan data from the validation report's pass findings
+    const scanData = useMemo(() => {
+        if (report) {
+            const data: Record<string, unknown> = {};
+            (report.findings_by_status.pass ?? []).forEach((f) => {
+                data[f.condition.attribute] = f.actual_value;
+            });
+            return data;
+        }
+        return MOCK_SCAN_DATA;
+    }, [report]);
+
+    const scanPermissions = MOCK_SCAN_PERMISSIONS;
+    const scanRoles = MOCK_SCAN_ROLES;
+    const scanNetworkRules = MOCK_SCAN_NETWORK_RULES as typeof MOCK_SCAN_NETWORK_RULES;
 
     // Only computed after the user triggers comparison
     const [comparisons, setComparisons] = useState<ReturnType<typeof buildComparison>>([]);
@@ -280,11 +310,10 @@ const Comparison: React.FC = () => {
     const warningCount = gaps.filter(g => g.severity === 'warning').length;
     const deployReady = blockerCount === 0 && compState === 'done';
 
-    const latestScan = scans[0];
     const metadata = {
-        provider: latestScan?.provider ?? prereqExtraction?.provider ?? 'aws',
-        environment: latestScan?.environment ?? 'production',
-        document: prereqExtraction?.filename ?? 'AI-Assist-Prerequisites.pdf',
+        provider: report?.cloud_provider ?? 'azure',
+        environment: report?.region ?? 'eastus',
+        document: filename ?? 'AI-Assist-Prerequisites.pdf',
     };
 
     // ── Run comparison flow ──────────────────────────────────────────────
@@ -347,9 +376,9 @@ const Comparison: React.FC = () => {
                         <Typography variant="body2" fontWeight={600}>Prerequisites Document</Typography>
                     </Box>
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                        {prereqExtraction?.filename ?? 'AI-Assist-Prerequisites.pdf'}
+                        {filename ?? 'AI-Assist-Prerequisites.pdf'}
                     </Typography>
-                    <Chip label={`${Object.keys(prereqData).length} fields`} size="small" sx={{ mt: 1, bgcolor: '#EFF6FF', color: '#1D4ED8', fontWeight: 600, fontSize: '0.75rem' }} />
+                    <Chip label={`${Object.keys(prereqData).length} attributes`} size="small" sx={{ mt: 1, bgcolor: '#EFF6FF', color: '#1D4ED8', fontWeight: 600, fontSize: '0.75rem' }} />
                 </CardContent>
             </Card>
             <Box sx={{ display: 'flex', alignItems: 'center', color: '#9CA3AF' }}>
@@ -362,9 +391,9 @@ const Comparison: React.FC = () => {
                         <Typography variant="body2" fontWeight={600}>Live Scan Results</Typography>
                     </Box>
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                        {latestScan ? `${latestScan.provider.toUpperCase()} / ${latestScan.environment}` : 'Mock scan data'}
+                        {report ? `${report.cloud_provider.toUpperCase()} / ${report.region}` : 'No scan yet'}
                     </Typography>
-                    <Chip label={`${Object.keys(scanData).length} fields`} size="small" sx={{ mt: 1, bgcolor: '#F0FDF4', color: '#065F46', fontWeight: 600, fontSize: '0.75rem' }} />
+                    <Chip label={`${Object.keys(scanData).length} attributes`} size="small" sx={{ mt: 1, bgcolor: '#F0FDF4', color: '#065F46', fontWeight: 600, fontSize: '0.75rem' }} />
                 </CardContent>
             </Card>
         </Box>
